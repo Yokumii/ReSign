@@ -14,7 +14,7 @@
 1. 检查运行器、Xcode、Swift 和 Homebrew 依赖。
 2. 运行默认测试。USB、外部 Anisette 和 GSA 探测测试保持跳过。
 3. 执行 release 构建并验证应用签名。
-4. 上传 ZIP 构建产物，保留 14 天。
+4. 生成并上传 `ReSign-ci-macos-arm64.dmg` 安装镜像，保留 14 天。
 
 建议在 GitHub 分支保护中将 Test and build (macOS 27, arm64) 设为必需检查。
 
@@ -29,7 +29,7 @@ git push origin v1.0.0
 
 流程分为两个作业：
 
-1. build：校验标签与 Info.plist 版本一致，运行测试和 release 构建，生成应用包、源码包、依赖源码包、构建信息和 SHA-256 校验文件。
+1. build：校验标签与 Info.plist 版本一致，运行测试和 release 构建，生成 DMG 安装镜像、源码包、依赖源码包、构建信息和 SHA-256 校验文件。
 2. release：下载同一次运行的构建产物，校验哈希，根据 Git 提交生成发布说明，并创建 Draft Release。
 
 在 GitHub Release 页面检查附件和发布说明后手动发布。重新运行同一标签可以更新 Draft Release；已公开的 Release 不允许覆盖，后续修改应使用新版本号和新标签。
@@ -68,7 +68,7 @@ docs: 更新发布说明
 
 | 文件 | 内容 |
 | --- | --- |
-| `ReSign-<版本>-macos-arm64.zip` | ad-hoc 签名、未公证的应用包 |
+| `ReSign-<版本>-macos-arm64.dmg` | 包含 ad-hoc 签名、未公证应用及“应用程序”快捷方式的安装镜像 |
 | `ReSign-<版本>-source.tar.gz` | 标签对应的项目源码 |
 | `ReSign-<版本>-dependencies.tar.gz` | Swift Package 源码、Homebrew 源码归档、Unicorn 源码、许可证和构建元数据 |
 | `BUILD-INFO.json` | 提交、版本、架构、工具链、源码下载地址及哈希 |
@@ -81,7 +81,10 @@ docs: 更新发布说明
 ```sh
 swift test --filter ReSignTests
 bash scripts/build-app.sh
+python3 scripts/package-dmg.py dist/ReSign.dmg
 ```
+
+`package-dmg.py` 使用 macOS 自带的 `hdiutil` 生成压缩只读镜像，不需要额外依赖。打开 DMG 后，将 `ReSign.app` 拖入“应用程序”即可安装。
 
 在干净且已打标签的提交上，可以使用与工作流相同的打包脚本：
 
@@ -89,4 +92,4 @@ bash scripts/build-app.sh
 RELEASE_TAG=v1.0.0 python3 scripts/package-release.py
 ```
 
-应用签名、依赖许可证收集和发布打包逻辑分别位于 `scripts/build-app.sh`、`scripts/collect-notices.py` 和 `scripts/package-release.py`。
+应用签名、依赖许可证收集、DMG 打包和发布附件生成逻辑分别位于 `scripts/build-app.sh`、`scripts/collect-notices.py`、`scripts/package-dmg.py` 和 `scripts/package-release.py`。

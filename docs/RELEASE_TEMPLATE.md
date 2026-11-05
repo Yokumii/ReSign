@@ -4,7 +4,7 @@
 
 ## 下载与安装
 
-- 应用包：`{app_archive}`。
+- 安装镜像：`{app_archive}`。打开 DMG，将 `ReSign.app` 拖入“应用程序”后启动。
 - 支持 Apple Silicon Mac，最低 macOS {minimum_macos}。
 - 该构建使用 ad-hoc 签名，未使用 Developer ID，也未经过 Apple 公证。首次打开时如被 Gatekeeper 阻止，请在 Finder 中右键应用并选择“打开”。
 - 需要自行配置可用的 Anisette v3 服务；发布包不包含账号、证书或 Tunnel Token。

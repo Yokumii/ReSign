@@ -37,15 +37,15 @@ jobs:
           swift test --filter ReSignTests
       - name: Build application
         run: bash scripts/build-app.sh
-      - name: Verify signature and archive application
+      - name: Verify signature and create disk image
         run: |
           codesign --verify --deep --strict dist/ReSign.app
-          ditto -c -k --sequesterRsrc --keepParent dist/ReSign.app dist/ReSign-ci-macos-arm64.zip
-      - name: Upload application archive
+          python3 scripts/package-dmg.py dist/ReSign-ci-macos-arm64.dmg
+      - name: Upload application disk image
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ReSign-ci-macos-arm64
-          path: dist/ReSign-ci-macos-arm64.zip
+          path: dist/ReSign-ci-macos-arm64.dmg
           if-no-files-found: error
           retention-days: 14
           compression-level: 0

@@ -44,6 +44,14 @@ RESIGN_CODESIGN_IDENTITY="Developer ID Application: Example" bash scripts/build-
 
 这里的 Mac 应用签名与为 iOS IPA 申请的开发证书相互独立。
 
+构建后可生成 DMG 安装镜像：
+
+```sh
+python3 scripts/package-dmg.py dist/ReSign.dmg
+```
+
+打开 DMG，将 `ReSign.app` 拖入“应用程序”即可安装。CI 构建产物和 Release 中的应用附件均使用 DMG 格式。
+
 ## 使用
 
 1. 打开 `dist/ReSign.app`，连接并解锁 iPhone／iPad，按设备提示信任 Mac。
