@@ -1,0 +1,11 @@
+[
+  {
+    "name": "Unicorn",
+    "package": "AnisetteKit",
+    "binary_url": "https://github.com/mahee96/unicorn/releases/download/2.1.4-xcf-a53ddc9/Unicorn.xcframework.zip",
+    "binary_checksum": "52e4ac9e2d704c4941adc2c381df8706aabf673dc843611a90b33ad349d562db",
+    "repository": "https://github.com/mahee96/unicorn",
+    "revision": "a53ddc9ac6d65b24936d4a37917333fcd816cfd0",
+    "licenses": ["COPYING", "COPYING.LGPL2", "COPYING_GLIB"]
+  }
+]
