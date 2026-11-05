@@ -1,0 +1,33 @@
+# Swift / Xcode build output
+.build/
+.swiftpm/
+dist/
+DerivedData/
+*.app/
+*.xcarchive/
+*.dSYM/
+xcuserdata/
+*.xcuserstate
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+*.p12
+*.pfx
+*.key
+*.pem
+*.cer
+*.crt
+*.mobileprovision
+*.provisionprofile
+
+# User-provided applications and runtime files
+*.ipa
+*.log
+/work/
+/outputs/
+
+# macOS
+.DS_Store
+._*
