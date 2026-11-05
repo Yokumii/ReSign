@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  HOMEBREW_NO_ANALYTICS: '1'
+  RESIGN_CODESIGN_IDENTITY: '-'
+  RESIGN_BUILD_NUMBER: ${{ github.run_number }}
+
+jobs:
+  build:
+    name: Test and build (macOS 27, arm64)
+    runs-on: xcode-27
+    timeout-minutes: 45
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Prepare build environment
+        run: bash scripts/ci-setup.sh
+      - name: Run default tests
+        run: |
+          unset RESIGN_DEVICE_TEST RESIGN_INTEGRATION_URL RESIGN_GSA_PROBE
+          swift test --filter ReSignTests
+      - name: Build application
+        run: bash scripts/build-app.sh
+      - name: Verify signature and archive application
+        run: |
+          codesign --verify --deep --strict dist/ReSign.app
+          ditto -c -k --sequesterRsrc --keepParent dist/ReSign.app dist/ReSign-ci-macos-arm64.zip
+      - name: Upload application archive
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ReSign-ci-macos-arm64
+          path: dist/ReSign-ci-macos-arm64.zip
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
