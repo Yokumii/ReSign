@@ -1,0 +1,36 @@
+name: resign-anisette
+
+services:
+  anisette:
+    image: ghcr.io/fdkevin0/anisette-server-rs@sha256:ed0d022626510c5f9c51fd7129755d5e40bfb341f4e3f895ed857404798e438d
+    restart: unless-stopped
+    command: ["--backend", "macos"]
+    volumes:
+      - macos-data:/data
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 768m
+    cpus: 1
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    profiles: ["tunnel"]
+    restart: unless-stopped
+    command: ["tunnel", "--no-autoupdate", "run"]
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}
+    depends_on:
+      - anisette
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  macos-data:
