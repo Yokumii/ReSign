@@ -7,6 +7,7 @@ ReSign 是使用 SwiftUI 编写的 macOS iOS 应用签名与自动续签工具�
 - 单 Apple 账号与开发团队，支持 GSA 登录和设备／短信双重认证。
 - 通过 USB 发现设备，并保存历史设备名称和 UDID。
 - 导入普通 IPA，保存独立的安装源和稳定的签名 Bundle ID。
+- 从 IPA 提取并缓存主应用图标，缺失或无法解码时使用占位图。
 - 申请开发证书、注册设备和 App ID、获取及更新描述文件。
 - 使用 SideSign／CodeSignKit 重签，并通过 AFC／Installation Proxy 安装或覆盖更新。
 - 默认在剩余不足 48 小时时续签，可在 12～72 小时内调整。
@@ -77,6 +78,7 @@ RESIGN_CODESIGN_IDENTITY="Developer ID Application: Example" bash scripts/build-
 - `library.json`：设备、托管应用、有效期、失败次数和设置。
 - `IPAs/`：导入的 IPA 副本。
 - `Work/`：签名操作的临时工作区。
+- `Icons/`：从 IPA 提取的应用图标缓存。
 - `Anisette/`：认证提供方路由缓存；ADI 身份和密钥保存在钥匙串。
 
 资料以原子写入方式保存；写入失败时不会更新内存状态。停止托管只删除本地记录和 IPA 副本，不卸载设备上的应用。退出账号会删除登录会话，但保留已有签名证书，供同一团队再次登录后复用。

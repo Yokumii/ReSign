@@ -1,6 +1,7 @@
 import AppKit
 import Combine
 import Foundation
+import ImageIO
 import SideSign
 
 @MainActor
@@ -10,6 +11,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var account: SavedAccount?
     @Published private(set) var stages: [UUID: JobStage] = [:]
     @Published private(set) var activities: [Activity] = []
+    @Published private(set) var appIcons: [UUID: NSImage] = [:]
     @Published private(set) var isBusy = false
     @Published private(set) var isLoggingIn = false
     @Published private(set) var needsLogin = false
@@ -25,6 +27,7 @@ final class AppModel: ObservableObject {
     private var store: LibraryStore?
     private var signing: SigningService?
     private var scanTask: Task<Void, Never>?
+    private var iconTask: Task<Void, Never>?
     private var loginTask: Task<Void, Never>?
     private var isScanning = false
     private var pendingAuthentication: AuthSession?
@@ -54,6 +57,9 @@ final class AppModel: ObservableObject {
 
     func start() {
         guard scanTask == nil, startupError == nil else { return }
+        iconTask = Task {
+            for app in library.apps { await loadAppIcon(for: app) }
+        }
         scanTask = Task {
             do {
                 account = try await signing?.savedAccount()
@@ -230,10 +236,12 @@ final class AppModel: ObservableObject {
             }.value
             var updated = library
             var obsolete: URL?
+            var obsoleteIcon: URL?
             if let index = updated.apps.firstIndex(where: {
                 $0.deviceID == device.udid && $0.originalBundleID == info.bundleID && $0.teamID == account.team.identifier
             }) {
                 obsolete = try store.sourceURL(for: updated.apps[index])
+                obsoleteIcon = try store.iconURL(for: updated.apps[index])
                 updated.apps[index].ipaFilename = filename
                 updated.apps[index].name = info.name
                 updated.apps[index].version = info.version
@@ -251,8 +259,11 @@ final class AppModel: ObservableObject {
             }
             try commit(updated)
             if let obsolete { removeTemporary(obsolete) }
+            if let obsoleteIcon { removeTemporary(obsoleteIcon) }
             record("已导入：\(info.name) \(info.version)")
             if let app = library.apps.first(where: { $0.ipaFilename == filename }) {
+                appIcons[app.id] = nil
+                await loadAppIcon(for: app)
                 // Import clears isBusy before the initial install starts.
                 Task { await self.refresh(appID: app.id, force: true) }
             }
@@ -340,16 +351,46 @@ final class AppModel: ObservableObject {
         guard !isBusy, let store else { return }
         do {
             let url = try store.sourceURL(for: app)
+            let iconURL = try store.iconURL(for: app)
             var updated = library
             updated.apps.removeAll { $0.id == app.id }
             try commit(updated)
             stages[app.id] = nil
+            appIcons[app.id] = nil
             removeTemporary(url)
+            removeTemporary(iconURL)
             record("已停止托管：\(app.name)，设备上的应用仍保留。")
         } catch { notice = userMessage(error) }
     }
 
     func revealData() { if let store { NSWorkspace.shared.open(store.root) } }
+
+    private func loadAppIcon(for app: ManagedApp) async {
+        guard let store else { return }
+        do {
+            let source = try store.sourceURL(for: app)
+            let cache = try store.iconURL(for: app)
+            let data = try await Task.detached(priority: .utility) { () throws -> Data? in
+                if let cached = try? Data(contentsOf: cache),
+                   let source = CGImageSourceCreateWithData(cached as CFData, nil),
+                   CGImageSourceGetCount(source) > 0 {
+                    return cached
+                }
+                try? FileManager.default.removeItem(at: cache)
+                return try IPAIconService.extract(from: source)
+            }.value
+            // Importing a replacement or forgetting an app can finish while extraction is running.
+            guard library.apps.contains(where: { $0.id == app.id && $0.ipaFilename == app.ipaFilename }),
+                  let data else { return }
+            guard let image = NSImage(data: data) else { throw ReSignError("应用图标缓存无法解码。") }
+            appIcons[app.id] = image
+            if !FileManager.default.fileExists(atPath: cache.path) {
+                try data.write(to: cache, options: .atomic)
+            }
+        } catch {
+            record("\(app.name) 的图标读取失败：\(userMessage(error))")
+        }
+    }
 
     private func updateApp(_ id: UUID, _ body: (inout ManagedApp) -> Void) throws {
         var updated = library

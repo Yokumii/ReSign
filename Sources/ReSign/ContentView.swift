@@ -152,7 +152,7 @@ private struct AppCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 15) {
             HStack(alignment: .top, spacing: 14) {
-                Image(systemName: "app.fill").font(.system(size: 39)).foregroundStyle(.tint)
+                appIcon
                 VStack(alignment: .leading, spacing: 5) {
                     Text(app.name).font(.headline)
                     Text("版本 \(app.version) · \(deviceName)").font(.caption).foregroundStyle(.secondary)
@@ -193,6 +193,19 @@ private struct AppCard: View {
         .padding(18)
         .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 14))
         .overlay(RoundedRectangle(cornerRadius: 14).stroke(.primary.opacity(0.06)))
+    }
+
+    private var appIcon: some View {
+        Group {
+            if let image = model.appIcons[app.id] {
+                Image(nsImage: image).resizable().scaledToFit()
+            } else {
+                Image(systemName: "app.fill").font(.system(size: 39)).foregroundStyle(.secondary)
+            }
+        }
+        .frame(width: 48, height: 48)
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .accessibilityHidden(true)
     }
 
     private var deviceName: String { model.library.devices.first { $0.id == app.deviceID }?.name ?? "设备" }
