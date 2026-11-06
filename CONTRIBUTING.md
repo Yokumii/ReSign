@@ -7,7 +7,7 @@ ReSign 是 Swift Package Manager 项目，入口为根目录 `Package.swift`。�
 构建依赖安装：
 
 ```sh
-brew install libimobiledevice libplist pkgconf
+brew install libplist libusbmuxd libimobiledevice-glue openssl@4 pkgconf
 ```
 
 ## 构建与测试

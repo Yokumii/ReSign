@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 struct ContentView: View {
     @ObservedObject var model: AppModel
     @State private var showingImporter = false
+    @State private var networkDevice: RememberedDevice?
 
     var body: some View {
         NavigationSplitView {
@@ -27,6 +28,10 @@ struct ContentView: View {
                                 Circle().fill(current?.trusted == true ? Color.green : Color.secondary.opacity(0.3))
                                     .frame(width: 6, height: 6)
                             }.padding(.vertical, 7).tag(device.id)
+                            .contextMenu {
+                                Button("通过 IP 连接…") { networkDevice = device }
+                                    .disabled(model.isBusy || model.isScanning)
+                            }
                         }
                     }
                 }.listStyle(.sidebar)
@@ -71,12 +76,18 @@ struct ContentView: View {
             .toolbar {
                 ToolbarItemGroup {
                     Button { Task { await model.scanDevices() } } label: { Label("扫描设备", systemImage: "arrow.clockwise") }
+                        .disabled(model.isBusy || model.isScanning)
+                    Button {
+                        networkDevice = model.library.devices.first { $0.id == model.selectedDeviceID }
+                    } label: { Label("通过 IP 连接", systemImage: "network") }
+                        .disabled(model.selectedDeviceID == nil || model.isBusy || model.isScanning || model.startupError != nil)
                     Button { model.showSettings = true } label: { Label("设置", systemImage: "gearshape") }
                         .disabled(model.isBusy || model.isLoggingIn)
                 }
             }
         }
         .sheet(isPresented: $model.showLogin, onDismiss: { model.cancelLogin() }) { LoginView(model: model) }
+        .sheet(item: $networkDevice) { device in NetworkConnectionView(model: model, device: device) }
         .sheet(isPresented: $model.showSettings) { SettingsView(model: model) }
         .alert("ReSign", isPresented: Binding(get: { model.notice != nil }, set: { if !$0 { model.notice = nil } })) {
             Button("知道了", role: .cancel) { model.notice = nil }
@@ -94,13 +105,13 @@ struct ContentView: View {
         HStack(alignment: .center) {
             VStack(alignment: .leading, spacing: 7) {
                 Text("应用续签").font(.system(size: 28, weight: .semibold))
-                Text(model.isBusy ? "正在处理，完成后更新有效期。" : "启动时自动处理临近到期的应用。")
+                Text(model.isBusy ? "正在处理，完成后更新有效期。" : model.isScanning ? "正在扫描设备…" : "启动时自动处理临近到期的应用。")
                     .foregroundStyle(.secondary)
             }
             Spacer()
             Button { showingImporter = true } label: { Label("导入 IPA", systemImage: "plus") }
                 .buttonStyle(.borderedProminent).controlSize(.large)
-                .disabled(model.isBusy || model.isLoggingIn || model.startupError != nil)
+                .disabled(model.isBusy || model.isScanning || model.isLoggingIn || model.startupError != nil)
         }.padding(26)
     }
 
@@ -110,7 +121,7 @@ struct ContentView: View {
             ContentUnavailableView {
                 Label("还没有托管应用", systemImage: "square.stack.3d.up")
             } description: {
-                Text("通过 USB 或局域网连接设备并登录账号，导入 IPA 后即可自动续签。局域网连接需先通过 USB 信任 Mac，并在 Finder 中开启“连接到 Wi-Fi 时显示此设备”。")
+                Text("通过 USB 或局域网连接设备并登录账号，导入 IPA 后即可自动续签。局域网连接需先通过 USB 信任 Mac，并在 Finder 中开启“接入 Wi-Fi 时显示此设备”。")
             }.frame(maxWidth: .infinity, minHeight: 230)
         } else {
             VStack(spacing: 12) {

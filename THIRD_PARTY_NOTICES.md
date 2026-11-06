@@ -7,6 +7,8 @@ ReSign is distributed under the GNU General Public License version 3. See `LICEN
 - **SideSign**, Magesh K and contributors, based on AltSign by Riley Testut and contributors. https://github.com/SideStore/SideSign — GPL-3.0 as declared by upstream. Original source notices are retained. Local changes and the exact revision are documented in `Vendor/SideSign/UPSTREAM.md`.
 - **MacAnisette**, copyright (c) 2025 nythepegasus. https://github.com/SideStore/MacAnisette — MIT. ReSign's native AOSKit bridge follows its documented selector usage. The full MIT notice is retained in `Vendor/MacAnisette-LICENSE`.
 
+- **libimobiledevice (ReSignMobileDevice)**: https://github.com/libimobiledevice/libimobiledevice — LGPL-2.1-or-later. A subset of version 1.4.0 is built from source as a separate dynamic library. Revision, modifications and rebuild instructions are in `Vendor/MobileDevice/UPSTREAM.md`; original notices and COPYING files are retained.
+
 ## Dependencies fetched at build time
 
 - **CodeSignKit**: https://github.com/mahee96/CodeSignKit
@@ -21,7 +23,6 @@ The exact dependency revisions are recorded in the package manifests and lockfil
 
 ## Device libraries used by local builds
 
-- **libimobiledevice**: https://github.com/libimobiledevice/libimobiledevice — LGPL-2.1.
 - **libplist**: https://github.com/libimobiledevice/libplist — LGPL-2.1.
 - Homebrew packages may bring additional shared libraries, including libusbmuxd, libimobiledevice-glue and cryptographic libraries. The build script bundles their dynamic dependencies from the local installation; those components remain subject to their individual licenses.
 

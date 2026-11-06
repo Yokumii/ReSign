@@ -29,7 +29,7 @@ final class AppModel: ObservableObject {
     private var scanTask: Task<Void, Never>?
     private var iconTask: Task<Void, Never>?
     private var loginTask: Task<Void, Never>?
-    private var isScanning = false
+    @Published private(set) var isScanning = false
     private var pendingAuthentication: AuthSession?
     private var verificationContinuation: CheckedContinuation<TwoFactorResponse, Never>?
 
@@ -74,12 +74,16 @@ final class AppModel: ObservableObject {
     }
 
     func scanDevices() async {
-        guard !isScanning, startupError == nil else { return }
+        guard !isScanning, !isBusy, startupError == nil else { return }
+        if await discoverDevices() { await refresh() }
+    }
+
+    private func discoverDevices() async -> Bool {
         isScanning = true
         defer { isScanning = false }
         do {
             let previouslyOnline = Set(connected.filter(\.trusted).map(\.udid))
-            let devices = try await DeviceService.scan()
+            let devices = try await DeviceService.scan(remembered: library.devices)
             connected = devices
             discoveryError = nil
             if selectedDeviceID == nil { selectedDeviceID = devices.first?.udid ?? library.devices.first?.id }
@@ -110,9 +114,25 @@ final class AppModel: ObservableObject {
         } catch {
             connected = []
             discoveryError = userMessage(error)
-            return
+            return false
         }
-        await refresh()
+        return true
+    }
+
+    func setNetworkAddress(_ input: String, for deviceID: String) throws {
+        guard !isBusy, !isScanning, startupError == nil else {
+            throw ReSignError("请等待当前扫描或安装完成后再修改 IP 地址。")
+        }
+        guard let index = library.devices.firstIndex(where: { $0.id == deviceID }) else {
+            throw ReSignError("请先通过 USB 配对并发现设备。")
+        }
+        let address = try DeviceService.validatedNetworkAddress(input)
+        var updated = library
+        updated.devices[index].networkAddress = address
+        try commit(updated)
+        connected.removeAll { $0.udid == deviceID && $0.networkAddress != nil }
+        record(address == nil ? "已清除设备的手动 IP 地址。" : "已保存设备 IP 地址，正在重新连接。")
+        Task { await self.scanDevices() }
     }
 
     func beginLogin(appleID: String, password: String) {
@@ -213,7 +233,7 @@ final class AppModel: ObservableObject {
     }
 
     func importIPA(_ url: URL) async {
-        guard !isBusy, !isLoggingIn, let store, let account, accountReady,
+        guard !isBusy, !isScanning, !isLoggingIn, let store, let account, accountReady,
               let device = selectedDevice, device.trusted else {
             notice = "请先登录账号，并选择已通过 USB 或局域网连接且受信任的 iPhone／iPad。"
             return
@@ -274,7 +294,7 @@ final class AppModel: ObservableObject {
     }
 
     func refresh(appID: UUID? = nil, force: Bool = false) async {
-        guard !isBusy, !isLoggingIn, startupError == nil, let store, let signing else { return }
+        guard !isBusy, !isScanning, !isLoggingIn, startupError == nil, let store, let signing else { return }
         let now = Date()
         let candidates = library.apps.filter { app in
             if let appID, app.id != appID { return false }
@@ -305,7 +325,7 @@ final class AppModel: ObservableObject {
                 }
                 workspace = artifact.workspace
                 stages[app.id] = .installing
-                try await DeviceService.install(ipa: artifact.ipa, udid: app.deviceID,
+                try await DeviceService.install(ipa: artifact.ipa, device: device,
                                                  bundleID: app.bundleID, version: app.buildVersion)
                 try updateApp(app.id) {
                     $0.expiresAt = artifact.expiresAt

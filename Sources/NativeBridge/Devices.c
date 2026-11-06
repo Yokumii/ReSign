@@ -1,4 +1,5 @@
 #include "NativeBridge.h"
+#include "NetworkHeartbeat.h"
 #include <libimobiledevice/libimobiledevice.h>
 #include <libimobiledevice/lockdown.h>
 #include <libimobiledevice/afc.h>
@@ -26,6 +27,91 @@ static void copy_value(plist_t target, const char *key, lockdownd_client_t clien
         plist_dict_set_item(target, key, value);
 }
 
+// All discovery and installation paths use the same pairing and identity checks.
+static int connect_device(const char *udid, const char *address, enum idevice_options options,
+                          idevice_t *device, lockdownd_client_t *client, int *network,
+                          rs_network_heartbeat **heartbeat, char **error) {
+    int code;
+    if (address) {
+        code = idevice_new_with_options(device, udid, IDEVICE_LOOKUP_USBMUX);
+        *network = code != IDEVICE_E_SUCCESS;
+        if (*network) code = idevice_new_with_network_address(device, udid, address);
+    } else {
+        code = idevice_new_with_options(device, udid, options);
+    }
+    if (code != IDEVICE_E_SUCCESS) {
+        fail(error, address
+             ? "无法连接指定地址：请确认 IP 正确、设备在线且已通过 USB 配对"
+             : "设备已断开，请连接 USB 或确认局域网设备可被系统发现", code);
+        return code;
+    }
+    code = lockdownd_client_new_with_handshake(*device, client, "ReSign");
+    if (code != LOCKDOWN_E_SUCCESS) {
+        fail(error, "设备握手失败：请解锁设备，确认配对有效、地址正确，并允许 ReSign 访问本地网络", code);
+        return code;
+    }
+    if (address) {
+        plist_t value = NULL;
+        char *actual = NULL;
+        code = lockdownd_get_value(*client, NULL, "UniqueDeviceID", &value);
+        if (value) plist_get_string_val(value, &actual);
+        int matches = code == LOCKDOWN_E_SUCCESS && actual && !strcmp(actual, udid);
+        free(actual);
+        if (value) plist_free(value);
+        if (!matches) {
+            fail(error, "该地址的设备身份与所选设备不符，或无法确认设备身份，请更新 IP 地址", code ? code : -1);
+            return -1;
+        }
+    }
+    if (address && *network)
+        return rs_network_heartbeat_start(*device, *client, heartbeat, error);
+    return 0;
+}
+
+static plist_t device_item(const char *udid, const char *address, int network) {
+    plist_t item = plist_new_dict();
+    plist_dict_set_item(item, "udid", plist_new_string(udid));
+    idevice_t device = NULL;
+    lockdownd_client_t client = NULL;
+    rs_network_heartbeat *heartbeat = NULL;
+    char *error = NULL;
+    int result = connect_device(udid, address,
+                                network ? IDEVICE_LOOKUP_NETWORK : IDEVICE_LOOKUP_USBMUX,
+                                &device, &client, &network, &heartbeat, &error);
+    plist_dict_set_item(item, "connectionType", plist_new_string(network ? "network" : "usb"));
+    if (address && network) plist_dict_set_item(item, "networkAddress", plist_new_string(address));
+    plist_dict_set_item(item, "trusted", plist_new_bool(result == 0));
+    if (result == 0) {
+        copy_value(item, "name", client, "DeviceName");
+        copy_value(item, "productType", client, "ProductType");
+        copy_value(item, "osVersion", client, "ProductVersion");
+    } else {
+        plist_dict_set_item(item, "connectionError", plist_new_string(error ? error : "设备连接失败"));
+    }
+    free(error);
+    rs_network_heartbeat_free(heartbeat);
+    if (client) lockdownd_client_free(client);
+    if (device) idevice_free(device);
+    return item;
+}
+
+static char *json_string(plist_t value, char **error) {
+    char *json = NULL;
+    uint32_t length = 0;
+    plist_to_json(value, &json, &length, 0);
+    plist_free(value);
+    if (!json) fail(error, "无法序列化设备信息", -1);
+    return json;
+}
+
+char *rs_network_device_json(const char *udid, const char *address, char **error) {
+    if (!udid || !*udid || !address || !*address) {
+        fail(error, "设备 UDID 和 IP 地址不能为空", -1);
+        return NULL;
+    }
+    return json_string(device_item(udid, address, 1), error);
+}
+
 char *rs_devices_json(char **error) {
     idevice_info_t *devices = NULL;
     int count = 0;
@@ -49,39 +135,10 @@ char *rs_devices_json(char **error) {
                 break;
             }
         }
-        int network = info->conn_type == CONNECTION_NETWORK;
-        plist_t item = plist_new_dict();
-        plist_dict_set_item(item, "udid", plist_new_string(info->udid));
-        plist_dict_set_item(item, "connectionType", plist_new_string(network ? "network" : "usb"));
-        idevice_t device = NULL;
-        lockdownd_client_t client = NULL;
-        int result = idevice_new_with_options(&device, info->udid,
-                                              network ? IDEVICE_LOOKUP_NETWORK : IDEVICE_LOOKUP_USBMUX);
-        if (result == IDEVICE_E_SUCCESS)
-            result = lockdownd_client_new_with_handshake(device, &client, "ReSign");
-        plist_dict_set_item(item, "trusted", plist_new_bool(result == 0));
-        if (result == 0) {
-            copy_value(item, "name", client, "DeviceName");
-            copy_value(item, "productType", client, "ProductType");
-            copy_value(item, "osVersion", client, "ProductVersion");
-        } else {
-            char message[512];
-            snprintf(message, sizeof(message), network
-                     ? "局域网连接失败：请确认设备与 Mac 在同一局域网并解锁设备；必要时通过 USB 重新信任，并在 Finder 中启用 Wi-Fi 显示（连接错误 %d）"
-                     : "请解锁设备并信任这台 Mac（连接错误 %d）", result);
-            plist_dict_set_item(item, "connectionError", plist_new_string(message));
-        }
-        if (client) lockdownd_client_free(client);
-        if (device) idevice_free(device);
-        plist_array_append_item(array, item);
+        plist_array_append_item(array, device_item(info->udid, NULL, info->conn_type == CONNECTION_NETWORK));
     }
     idevice_device_list_extended_free(devices);
-    char *json = NULL;
-    uint32_t length = 0;
-    plist_to_json(array, &json, &length, 0);
-    plist_free(array);
-    if (!json) fail(error, "无法序列化设备列表", -1);
-    return json;
+    return json_string(array, error);
 }
 
 static int lookup_app(instproxy_client_t client, const char *bundle_id,
@@ -137,13 +194,14 @@ static void installation_status(plist_t command, plist_t status, void *context) 
     free(name); free(description); free(status_name);
 }
 
-int rs_install(const char *udid, const char *ipa_path, const char *bundle_id,
+int rs_install(const char *udid, const char *address, const char *ipa_path, const char *bundle_id,
                const char *bundle_version, char **error) {
     idevice_t device = NULL;
     lockdownd_client_t lockdown = NULL;
     lockdownd_service_descriptor_t service = NULL;
     afc_client_t afc = NULL;
     instproxy_client_t proxy = NULL;
+    rs_network_heartbeat *heartbeat = NULL;
     FILE *input = NULL;
     uint64_t handle = 0;
     int result = -1;
@@ -153,10 +211,10 @@ int rs_install(const char *udid, const char *ipa_path, const char *bundle_id,
         .mutex = PTHREAD_MUTEX_INITIALIZER, .condition = PTHREAD_COND_INITIALIZER,
         .complete = 0, .code = -1, .message = NULL
     };
-    int code = idevice_new_with_options(&device, udid, IDEVICE_LOOKUP_USBMUX | IDEVICE_LOOKUP_NETWORK);
-    if (code != 0) { fail(error, "设备已断开，请连接 USB 或确认设备与 Mac 在同一局域网并已启用 Wi-Fi 显示", code); goto cleanup; }
-    code = lockdownd_client_new_with_handshake(device, &lockdown, "ReSign");
-    if (code != 0) { fail(error, "设备未解锁或信任已失效", code); goto cleanup; }
+    int network = 0;
+    int code = connect_device(udid, address, IDEVICE_LOOKUP_USBMUX | IDEVICE_LOOKUP_NETWORK,
+                              &device, &lockdown, &network, &heartbeat, error);
+    if (code != 0) goto cleanup;
     code = lockdownd_start_service(lockdown, "com.apple.afc", &service);
     if (code != 0) { fail(error, "无法启动文件传输服务", code); goto cleanup; }
     code = afc_client_new(device, service, &afc);
@@ -166,8 +224,14 @@ int rs_install(const char *udid, const char *ipa_path, const char *bundle_id,
 
     code = afc_get_file_info(afc, "PublicStaging", &info);
     if (info) afc_dictionary_free(info);
-    if (code == AFC_E_OBJECT_NOT_FOUND) code = afc_make_directory(afc, "PublicStaging");
-    if (code != 0) { fail(error, "无法创建设备暂存目录", code); goto cleanup; }
+    if (code == AFC_E_OBJECT_NOT_FOUND) {
+        code = afc_make_directory(afc, "PublicStaging");
+        if (code != 0) { fail(error, "无法创建设备暂存目录", code); goto cleanup; }
+    } else if (code != 0) {
+        if (!rs_network_heartbeat_check(heartbeat, error))
+            fail(error, "无法读取设备暂存目录信息，文件传输连接异常", code);
+        goto cleanup;
+    }
     uuid_t uuid; char uuid_text[37]; uuid_generate(uuid); uuid_unparse_lower(uuid, uuid_text);
     snprintf(staging, sizeof(staging), "PublicStaging/resign-%s.ipa", uuid_text);
     input = fopen(ipa_path, "rb");
@@ -177,6 +241,7 @@ int rs_install(const char *udid, const char *ipa_path, const char *bundle_id,
     char buffer[256 * 1024];
     size_t length;
     while ((length = fread(buffer, 1, sizeof(buffer), input)) > 0) {
+        if (rs_network_heartbeat_check(heartbeat, error)) goto cleanup;
         uint32_t offset = 0;
         while (offset < length) {
             uint32_t written = 0;
@@ -231,6 +296,7 @@ cleanup:
     if (proxy) instproxy_client_free(proxy);
     if (afc) afc_client_free(afc);
     if (service) lockdownd_service_descriptor_free(service);
+    rs_network_heartbeat_free(heartbeat);
     if (lockdown) lockdownd_client_free(lockdown);
     if (device) idevice_free(device);
     free(state.message);
