@@ -9,6 +9,7 @@ import plistlib
 import re
 import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 import urllib.parse
@@ -43,8 +44,8 @@ output = root / "dist/release"
 if output.exists():
     shutil.rmtree(output)
 output.mkdir()
-subprocess.run(["ditto", "-c", "-k", "--sequesterRsrc", "--keepParent", str(app),
-                str(output / f"ReSign-{version}-macos-arm64.zip")], check=True)
+subprocess.run([sys.executable, str(root / "scripts/package-dmg.py"),
+                str(output / f"ReSign-{version}-macos-arm64.dmg"), "--app", str(app)], check=True)
 subprocess.run(["git", "archive", "--format=tar.gz", f"--prefix=ReSign-{version}/",
                 "-o", str(output / f"ReSign-{version}-source.tar.gz"), "HEAD"], check=True)
 

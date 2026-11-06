@@ -12,7 +12,7 @@ if (( MACOS_MAJOR < 27 )); then
 fi
 xcodebuild -version
 swift --version
-brew install libimobiledevice libplist libimobiledevice-glue libusbmuxd openssl@4 pkgconf
+brew install libplist libimobiledevice-glue libusbmuxd openssl@4 pkgconf
 PKG_CONFIG_PATH="$(brew --prefix)/lib/pkgconfig"
 export PKG_CONFIG_PATH
 if [[ -n "${GITHUB_ENV:-}" ]]; then

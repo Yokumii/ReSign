@@ -1,6 +1,7 @@
 import AppKit
 import Combine
 import Foundation
+import ImageIO
 import SideSign
 
 @MainActor
@@ -10,6 +11,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var account: SavedAccount?
     @Published private(set) var stages: [UUID: JobStage] = [:]
     @Published private(set) var activities: [Activity] = []
+    @Published private(set) var appIcons: [UUID: NSImage] = [:]
     @Published private(set) var isBusy = false
     @Published private(set) var isLoggingIn = false
     @Published private(set) var needsLogin = false
@@ -25,8 +27,9 @@ final class AppModel: ObservableObject {
     private var store: LibraryStore?
     private var signing: SigningService?
     private var scanTask: Task<Void, Never>?
+    private var iconTask: Task<Void, Never>?
     private var loginTask: Task<Void, Never>?
-    private var isScanning = false
+    @Published private(set) var isScanning = false
     private var pendingAuthentication: AuthSession?
     private var verificationContinuation: CheckedContinuation<TwoFactorResponse, Never>?
 
@@ -54,6 +57,9 @@ final class AppModel: ObservableObject {
 
     func start() {
         guard scanTask == nil, startupError == nil else { return }
+        iconTask = Task {
+            for app in library.apps { await loadAppIcon(for: app) }
+        }
         scanTask = Task {
             do {
                 account = try await signing?.savedAccount()
@@ -68,12 +74,16 @@ final class AppModel: ObservableObject {
     }
 
     func scanDevices() async {
-        guard !isScanning, startupError == nil else { return }
+        guard !isScanning, !isBusy, startupError == nil else { return }
+        if await discoverDevices() { await refresh() }
+    }
+
+    private func discoverDevices() async -> Bool {
         isScanning = true
         defer { isScanning = false }
         do {
             let previouslyOnline = Set(connected.filter(\.trusted).map(\.udid))
-            let devices = try await DeviceService.scan()
+            let devices = try await DeviceService.scan(remembered: library.devices)
             connected = devices
             discoveryError = nil
             if selectedDeviceID == nil { selectedDeviceID = devices.first?.udid ?? library.devices.first?.id }
@@ -104,9 +114,25 @@ final class AppModel: ObservableObject {
         } catch {
             connected = []
             discoveryError = userMessage(error)
-            return
+            return false
         }
-        await refresh()
+        return true
+    }
+
+    func setNetworkAddress(_ input: String, for deviceID: String) throws {
+        guard !isBusy, !isScanning, startupError == nil else {
+            throw ReSignError("请等待当前扫描或安装完成后再修改 IP 地址。")
+        }
+        guard let index = library.devices.firstIndex(where: { $0.id == deviceID }) else {
+            throw ReSignError("请先通过 USB 配对并发现设备。")
+        }
+        let address = try DeviceService.validatedNetworkAddress(input)
+        var updated = library
+        updated.devices[index].networkAddress = address
+        try commit(updated)
+        connected.removeAll { $0.udid == deviceID && $0.networkAddress != nil }
+        record(address == nil ? "已清除设备的手动 IP 地址。" : "已保存设备 IP 地址，正在重新连接。")
+        Task { await self.scanDevices() }
     }
 
     func beginLogin(appleID: String, password: String) {
@@ -207,9 +233,9 @@ final class AppModel: ObservableObject {
     }
 
     func importIPA(_ url: URL) async {
-        guard !isBusy, !isLoggingIn, let store, let account, accountReady,
+        guard !isBusy, !isScanning, !isLoggingIn, let store, let account, accountReady,
               let device = selectedDevice, device.trusted else {
-            notice = "请先登录账号，并选择已通过 USB 连接和信任的 iPhone／iPad。"
+            notice = "请先登录账号，并选择已通过 USB 或局域网连接且受信任的 iPhone／iPad。"
             return
         }
         isBusy = true
@@ -230,10 +256,12 @@ final class AppModel: ObservableObject {
             }.value
             var updated = library
             var obsolete: URL?
+            var obsoleteIcon: URL?
             if let index = updated.apps.firstIndex(where: {
                 $0.deviceID == device.udid && $0.originalBundleID == info.bundleID && $0.teamID == account.team.identifier
             }) {
                 obsolete = try store.sourceURL(for: updated.apps[index])
+                obsoleteIcon = try store.iconURL(for: updated.apps[index])
                 updated.apps[index].ipaFilename = filename
                 updated.apps[index].name = info.name
                 updated.apps[index].version = info.version
@@ -251,8 +279,11 @@ final class AppModel: ObservableObject {
             }
             try commit(updated)
             if let obsolete { removeTemporary(obsolete) }
+            if let obsoleteIcon { removeTemporary(obsoleteIcon) }
             record("已导入：\(info.name) \(info.version)")
             if let app = library.apps.first(where: { $0.ipaFilename == filename }) {
+                appIcons[app.id] = nil
+                await loadAppIcon(for: app)
                 // Import clears isBusy before the initial install starts.
                 Task { await self.refresh(appID: app.id, force: true) }
             }
@@ -263,7 +294,7 @@ final class AppModel: ObservableObject {
     }
 
     func refresh(appID: UUID? = nil, force: Bool = false) async {
-        guard !isBusy, !isLoggingIn, startupError == nil, let store, let signing else { return }
+        guard !isBusy, !isScanning, !isLoggingIn, startupError == nil, let store, let signing else { return }
         let now = Date()
         let candidates = library.apps.filter { app in
             if let appID, app.id != appID { return false }
@@ -294,7 +325,7 @@ final class AppModel: ObservableObject {
                 }
                 workspace = artifact.workspace
                 stages[app.id] = .installing
-                try await DeviceService.install(ipa: artifact.ipa, udid: app.deviceID,
+                try await DeviceService.install(ipa: artifact.ipa, device: device,
                                                  bundleID: app.bundleID, version: app.buildVersion)
                 try updateApp(app.id) {
                     $0.expiresAt = artifact.expiresAt
@@ -340,16 +371,46 @@ final class AppModel: ObservableObject {
         guard !isBusy, let store else { return }
         do {
             let url = try store.sourceURL(for: app)
+            let iconURL = try store.iconURL(for: app)
             var updated = library
             updated.apps.removeAll { $0.id == app.id }
             try commit(updated)
             stages[app.id] = nil
+            appIcons[app.id] = nil
             removeTemporary(url)
+            removeTemporary(iconURL)
             record("已停止托管：\(app.name)，设备上的应用仍保留。")
         } catch { notice = userMessage(error) }
     }
 
     func revealData() { if let store { NSWorkspace.shared.open(store.root) } }
+
+    private func loadAppIcon(for app: ManagedApp) async {
+        guard let store else { return }
+        do {
+            let source = try store.sourceURL(for: app)
+            let cache = try store.iconURL(for: app)
+            let data = try await Task.detached(priority: .utility) { () throws -> Data? in
+                if let cached = try? Data(contentsOf: cache),
+                   let source = CGImageSourceCreateWithData(cached as CFData, nil),
+                   CGImageSourceGetCount(source) > 0 {
+                    return cached
+                }
+                try? FileManager.default.removeItem(at: cache)
+                return try IPAIconService.extract(from: source)
+            }.value
+            // Importing a replacement or forgetting an app can finish while extraction is running.
+            guard library.apps.contains(where: { $0.id == app.id && $0.ipaFilename == app.ipaFilename }),
+                  let data else { return }
+            guard let image = NSImage(data: data) else { throw ReSignError("应用图标缓存无法解码。") }
+            appIcons[app.id] = image
+            if !FileManager.default.fileExists(atPath: cache.path) {
+                try data.write(to: cache, options: .atomic)
+            }
+        } catch {
+            record("\(app.name) 的图标读取失败：\(userMessage(error))")
+        }
+    }
 
     private func updateApp(_ id: UUID, _ body: (inout ManagedApp) -> Void) throws {
         var updated = library

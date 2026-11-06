@@ -7,7 +7,7 @@ ReSign 是 Swift Package Manager 项目，入口为根目录 `Package.swift`。�
 构建依赖安装：
 
 ```sh
-brew install libimobiledevice libplist pkgconf
+brew install libplist libusbmuxd libimobiledevice-glue openssl@4 pkgconf
 ```
 
 ## 构建与测试
@@ -24,7 +24,7 @@ bash scripts/build-app.sh
 swift test --filter ReSignTests
 ```
 
-需要真实网络或 USB 设备的测试通过环境变量显式启用，命令见 [docs/TESTING.md](docs/TESTING.md)。提交代码前至少运行与改动范围相关的测试；涉及认证、签名、设备安装或持久化的改动应同时记录已验证范围。
+需要真实 USB／局域网设备或外部服务的测试通过环境变量显式启用，命令见 [docs/TESTING.md](docs/TESTING.md)。提交代码前至少运行与改动范围相关的测试；涉及认证、签名、设备安装或持久化的改动应同时记录已验证范围。
 
 ## 代码约定
 

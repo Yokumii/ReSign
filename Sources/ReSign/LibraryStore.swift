@@ -4,13 +4,14 @@ struct LibraryStore {
     let root: URL
     var ipaDirectory: URL { root.appendingPathComponent("IPAs", isDirectory: true) }
     var workDirectory: URL { root.appendingPathComponent("Work", isDirectory: true) }
+    private var iconDirectory: URL { root.appendingPathComponent("Icons", isDirectory: true) }
     private var libraryURL: URL { root.appendingPathComponent("library.json") }
 
     init(root: URL? = nil) throws {
         self.root = try root ?? FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask,
                                                        appropriateFor: nil, create: true)
             .appendingPathComponent("io.resign.mac", isDirectory: true)
-        for directory in [self.root, ipaDirectory, workDirectory] {
+        for directory in [self.root, ipaDirectory, workDirectory, iconDirectory] {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
                                                     attributes: [.posixPermissions: 0o700])
         }
@@ -33,5 +34,10 @@ struct LibraryStore {
         guard app.ipaFilename == URL(fileURLWithPath: app.ipaFilename).lastPathComponent,
               app.ipaFilename.hasSuffix(".ipa") else { throw ReSignError("IPA 缓存路径无效。") }
         return ipaDirectory.appendingPathComponent(app.ipaFilename)
+    }
+
+    func iconURL(for app: ManagedApp) throws -> URL {
+        let source = try sourceURL(for: app)
+        return iconDirectory.appendingPathComponent(source.deletingPathExtension().lastPathComponent + ".png")
     }
 }

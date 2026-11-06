@@ -1,0 +1,5 @@
+module CDeviceGlue [system] {
+    header "shim.h"
+    link "imobiledevice-glue-1.0"
+    export *
+}

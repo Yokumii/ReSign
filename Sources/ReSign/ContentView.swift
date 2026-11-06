@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 struct ContentView: View {
     @ObservedObject var model: AppModel
     @State private var showingImporter = false
+    @State private var networkDevice: RememberedDevice?
 
     var body: some View {
         NavigationSplitView {
@@ -20,13 +21,17 @@ struct ContentView: View {
                                 Image(systemName: "iphone").font(.title2)
                                 VStack(alignment: .leading, spacing: 4) {
                                     Text(device.name).lineLimit(1)
-                                    Text(current == nil ? "未连接" : current!.trusted ? "USB 已连接" : "等待信任")
+                                    Text(current?.connectionStatus ?? "未连接")
                                         .font(.caption).foregroundStyle(.secondary)
                                 }
                                 Spacer(minLength: 0)
                                 Circle().fill(current?.trusted == true ? Color.green : Color.secondary.opacity(0.3))
                                     .frame(width: 6, height: 6)
                             }.padding(.vertical, 7).tag(device.id)
+                            .contextMenu {
+                                Button("通过 IP 连接…") { networkDevice = device }
+                                    .disabled(model.isBusy || model.isScanning)
+                            }
                         }
                     }
                 }.listStyle(.sidebar)
@@ -71,12 +76,18 @@ struct ContentView: View {
             .toolbar {
                 ToolbarItemGroup {
                     Button { Task { await model.scanDevices() } } label: { Label("扫描设备", systemImage: "arrow.clockwise") }
+                        .disabled(model.isBusy || model.isScanning)
+                    Button {
+                        networkDevice = model.library.devices.first { $0.id == model.selectedDeviceID }
+                    } label: { Label("通过 IP 连接", systemImage: "network") }
+                        .disabled(model.selectedDeviceID == nil || model.isBusy || model.isScanning || model.startupError != nil)
                     Button { model.showSettings = true } label: { Label("设置", systemImage: "gearshape") }
                         .disabled(model.isBusy || model.isLoggingIn)
                 }
             }
         }
         .sheet(isPresented: $model.showLogin, onDismiss: { model.cancelLogin() }) { LoginView(model: model) }
+        .sheet(item: $networkDevice) { device in NetworkConnectionView(model: model, device: device) }
         .sheet(isPresented: $model.showSettings) { SettingsView(model: model) }
         .alert("ReSign", isPresented: Binding(get: { model.notice != nil }, set: { if !$0 { model.notice = nil } })) {
             Button("知道了", role: .cancel) { model.notice = nil }
@@ -94,13 +105,13 @@ struct ContentView: View {
         HStack(alignment: .center) {
             VStack(alignment: .leading, spacing: 7) {
                 Text("应用续签").font(.system(size: 28, weight: .semibold))
-                Text(model.isBusy ? "正在处理，完成后更新有效期。" : "启动时自动处理临近到期的应用。")
+                Text(model.isBusy ? "正在处理，完成后更新有效期。" : model.isScanning ? "正在扫描设备…" : "启动时自动处理临近到期的应用。")
                     .foregroundStyle(.secondary)
             }
             Spacer()
             Button { showingImporter = true } label: { Label("导入 IPA", systemImage: "plus") }
                 .buttonStyle(.borderedProminent).controlSize(.large)
-                .disabled(model.isBusy || model.isLoggingIn || model.startupError != nil)
+                .disabled(model.isBusy || model.isScanning || model.isLoggingIn || model.startupError != nil)
         }.padding(26)
     }
 
@@ -110,7 +121,7 @@ struct ContentView: View {
             ContentUnavailableView {
                 Label("还没有托管应用", systemImage: "square.stack.3d.up")
             } description: {
-                Text("通过 USB 连接设备并登录账号，导入一次 IPA，即可保存安装源并启用自动续签。")
+                Text("通过 USB 或局域网连接设备并登录账号，导入 IPA 后即可自动续签。局域网连接需先通过 USB 信任 Mac，并在 Finder 中开启“接入 Wi-Fi 时显示此设备”。")
             }.frame(maxWidth: .infinity, minHeight: 230)
         } else {
             VStack(spacing: 12) {
@@ -152,7 +163,7 @@ private struct AppCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 15) {
             HStack(alignment: .top, spacing: 14) {
-                Image(systemName: "app.fill").font(.system(size: 39)).foregroundStyle(.tint)
+                appIcon
                 VStack(alignment: .leading, spacing: 5) {
                     Text(app.name).font(.headline)
                     Text("版本 \(app.version) · \(deviceName)").font(.caption).foregroundStyle(.secondary)
@@ -193,6 +204,19 @@ private struct AppCard: View {
         .padding(18)
         .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 14))
         .overlay(RoundedRectangle(cornerRadius: 14).stroke(.primary.opacity(0.06)))
+    }
+
+    private var appIcon: some View {
+        Group {
+            if let image = model.appIcons[app.id] {
+                Image(nsImage: image).resizable().scaledToFit()
+            } else {
+                Image(systemName: "app.fill").font(.system(size: 39)).foregroundStyle(.secondary)
+            }
+        }
+        .frame(width: 48, height: 48)
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .accessibilityHidden(true)
     }
 
     private var deviceName: String { model.library.devices.first { $0.id == app.deviceID }?.name ?? "设备" }

@@ -1,4 +1,5 @@
 import XCTest
+import ImageIO
 import SideSign
 @testable import ReSign
 
@@ -95,9 +96,79 @@ final class ReSignTests: XCTestCase {
         XCTAssertThrowsError(try IPAService.inspect(extendedApp))
     }
 
+    func testIPAIconSelectsLargestPrimaryVariantAndExcludesOtherIcons() throws {
+        let plist: [String: Any] = ["CFBundleIcons": ["CFBundlePrimaryIcon": [
+            "CFBundleIconFiles": ["AppIcon60x60"], "CFBundleIconName": "AppIcon"
+        ]]]
+        let ipa = try makeIPA(entries: [
+            ("Payload/Test.app/Info.plist", PropertyListSerialization.data(fromPropertyList: plist, format: .binary, options: 0)),
+            ("Payload/Test.app/AppIcon60x60@2x.png", makeIcon(size: 120)),
+            ("Payload/Test.app/AppIcon60x60@3x.png", makeIcon(size: 180)),
+            ("Payload/Test.app/AppIconAlternate.png", makeIcon(size: 512)),
+            ("Payload/Test.app/Frameworks/Other.framework/AppIcon.png", makeIcon(size: 512))
+        ])
+        let icon = try XCTUnwrap(IPAIconService.extract(from: ipa))
+        let source = try XCTUnwrap(CGImageSourceCreateWithData(icon as CFData, nil))
+        let image = try XCTUnwrap(CGImageSourceCreateImageAtIndex(source, 0, nil))
+        XCTAssertEqual(image.width, 180)
+        XCTAssertEqual(image.height, 180)
+    }
+
+    func testIPAIconSupportsLegacyAndIPadDeclarationsAndLimitsCachedDimensions() throws {
+        let declarations: [[String: Any]] = [
+            ["CFBundleIconFile": "Icon.png"],
+            ["CFBundleIconFiles": ["Icon"]],
+            ["CFBundleIconFiles~ipad": ["Icon"]],
+            ["CFBundleIcons~ipad": ["CFBundlePrimaryIcon": ["CFBundleIconFiles": ["Icon"]]]]
+        ]
+        for plist in declarations {
+            let ipa = try makeIPA(entries: [
+                ("Payload/Test.app/Info.plist", PropertyListSerialization.data(fromPropertyList: plist, format: .binary, options: 0)),
+                ("Payload/Test.app/Icon@2x~ipad.png", makeIcon(size: 512))
+            ])
+            let icon = try XCTUnwrap(IPAIconService.extract(from: ipa))
+            let source = try XCTUnwrap(CGImageSourceCreateWithData(icon as CFData, nil))
+            let image = try XCTUnwrap(CGImageSourceCreateImageAtIndex(source, 0, nil))
+            XCTAssertEqual(image.width, 256)
+            XCTAssertEqual(image.height, 256)
+        }
+    }
+
+    func testIPAIconDistinguishesMissingAndCorruptImages() throws {
+        let missing = try makeIPA(entries: basicEntries())
+        XCTAssertNil(try IPAIconService.extract(from: missing))
+        let corrupt = try makeIPA(entries: basicEntries() + [("Payload/Test.app/Icon.png", Data("invalid".utf8))])
+        XCTAssertThrowsError(try IPAIconService.extract(from: corrupt))
+    }
+
+    func testIconCacheFollowsIPAIdentityAndRejectsEscapingPaths() throws {
+        let store = try LibraryStore(root: root)
+        var app = sampleApp()
+        XCTAssertEqual(try store.iconURL(for: app), root.appendingPathComponent("Icons/test.png"))
+        app.ipaFilename = "replacement.ipa"
+        XCTAssertEqual(try store.iconURL(for: app), root.appendingPathComponent("Icons/replacement.png"))
+        app.ipaFilename = "../escaped.ipa"
+        XCTAssertThrowsError(try store.iconURL(for: app))
+    }
+
+    func testConnectedDeviceDecodesTransportAndStatus() throws {
+        let json = """
+        [
+          {"udid":"usb-device","name":"USB iPhone","trusted":true,"connectionType":"usb"},
+          {"udid":"wifi-device","name":"Wi-Fi iPad","trusted":true,"connectionType":"network"},
+          {"udid":"offline-device","trusted":false,"connectionType":"network","connectionError":"offline"}
+        ]
+        """
+        let devices = try JSONDecoder().decode([ConnectedDevice].self, from: Data(json.utf8))
+        XCTAssertEqual(devices.count, 3)
+        XCTAssertEqual(devices[0].connectionStatus, "USB 已连接")
+        XCTAssertEqual(devices[1].connectionStatus, "局域网已连接")
+        XCTAssertEqual(devices[2].connectionStatus, "局域网连接不可用")
+    }
+
     func testNativeDeviceEnumeration() async throws {
         guard ProcessInfo.processInfo.environment["RESIGN_DEVICE_TEST"] == "1" else {
-            throw XCTSkip("Set RESIGN_DEVICE_TEST=1 to run the USB device enumeration test")
+            throw XCTSkip("Set RESIGN_DEVICE_TEST=1 to run the USB/network device enumeration test")
         }
         let devices = try await DeviceService.scan()
         XCTAssertEqual(Set(devices.map(\.udid)).count, devices.count)
@@ -190,5 +261,19 @@ final class ReSignTests: XCTestCase {
         for (name, data) in entries { try writer.writeFile(path: name, data: data, permissions: 0o755) }
         try writer.close()
         return url
+    }
+
+    private func makeIcon(size: Int) throws -> Data {
+        let context = try XCTUnwrap(CGContext(data: nil, width: size, height: size, bitsPerComponent: 8,
+                                            bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+                                            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        context.setFillColor(CGColor(red: 1, green: 0, blue: 0, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: size, height: size))
+        let image = try XCTUnwrap(context.makeImage())
+        let data = NSMutableData()
+        let destination = try XCTUnwrap(CGImageDestinationCreateWithData(data, "public.png" as CFString, 1, nil))
+        CGImageDestinationAddImage(destination, image, nil)
+        XCTAssertTrue(CGImageDestinationFinalize(destination))
+        return data as Data
     }
 }

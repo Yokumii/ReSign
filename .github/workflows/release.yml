@@ -54,7 +54,7 @@ jobs:
           swift test --filter ReSignTests
       - name: Build application
         run: bash scripts/build-app.sh
-      - name: Package application, source and checksums
+      - name: Package disk image, source and checksums
         run: python3 scripts/package-release.py
       - name: Upload release artifacts
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

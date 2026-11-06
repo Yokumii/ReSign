@@ -73,7 +73,7 @@ def main():
 
     template = (root / "docs/RELEASE_TEMPLATE.md").read_text(encoding="utf-8")
     for name, value in {"version": version, "minimum_macos": info["LSMinimumSystemVersion"],
-                        "app_archive": f"ReSign-{version}-macos-arm64.zip"}.items():
+                        "app_archive": f"ReSign-{version}-macos-arm64.dmg"}.items():
         template = template.replace("{" + name + "}", value)
     sections = [template.rstrip()]
     supplement = root / "docs/releases" / f"{version}.md"

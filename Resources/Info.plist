@@ -7,10 +7,12 @@
     <key>CFBundleName</key><string>ReSign</string>
     <key>CFBundleDisplayName</key><string>ReSign</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>1.0.0</string>
+    <key>CFBundleIconFile</key><string>AppIcon</string>
+    <key>CFBundleShortVersionString</key><string>1.1.0</string>
     <key>CFBundleVersion</key><string>1</string>
     <key>LSMinimumSystemVersion</key><string>27.0</string>
     <key>NSHighResolutionCapable</key><true/>
+    <key>NSLocalNetworkUsageDescription</key><string>ReSign 需要通过局域网连接已与这台 Mac 配对的 iPhone／iPad，以安装应用和自动续签。</string>
     <key>NSPrincipalClass</key><string>NSApplication</string>
     <key>NSHumanReadableCopyright</key><string>ReSign contributors; GPL-3.0-or-later. Includes SideSign and other open-source components.</string>
 </dict>
