@@ -27,20 +27,36 @@ static void copy_value(plist_t target, const char *key, lockdownd_client_t clien
 }
 
 char *rs_devices_json(char **error) {
-    char **udids = NULL;
+    idevice_info_t *devices = NULL;
     int count = 0;
-    idevice_error_t code = idevice_get_device_list(&udids, &count);
+    idevice_error_t code = idevice_get_device_list_extended(&devices, &count);
     if (code != IDEVICE_E_SUCCESS) {
-        fail(error, "无法读取 USB 设备列表", code);
+        fail(error, "无法读取 USB／局域网设备列表", code);
         return NULL;
     }
     plist_t array = plist_new_array();
     for (int i = 0; i < count; i++) {
+        idevice_info_t info = devices[i];
+        int duplicate = 0;
+        for (int j = 0; j < i; j++) {
+            if (!strcmp(devices[j]->udid, info->udid)) { duplicate = 1; break; }
+        }
+        if (duplicate) continue;
+        // A device can appear on both transports; show it once and prefer USB.
+        for (int j = i + 1; j < count; j++) {
+            if (!strcmp(devices[j]->udid, info->udid) && devices[j]->conn_type == CONNECTION_USBMUXD) {
+                info = devices[j];
+                break;
+            }
+        }
+        int network = info->conn_type == CONNECTION_NETWORK;
         plist_t item = plist_new_dict();
-        plist_dict_set_item(item, "udid", plist_new_string(udids[i]));
+        plist_dict_set_item(item, "udid", plist_new_string(info->udid));
+        plist_dict_set_item(item, "connectionType", plist_new_string(network ? "network" : "usb"));
         idevice_t device = NULL;
         lockdownd_client_t client = NULL;
-        int result = idevice_new_with_options(&device, udids[i], IDEVICE_LOOKUP_USBMUX);
+        int result = idevice_new_with_options(&device, info->udid,
+                                              network ? IDEVICE_LOOKUP_NETWORK : IDEVICE_LOOKUP_USBMUX);
         if (result == IDEVICE_E_SUCCESS)
             result = lockdownd_client_new_with_handshake(device, &client, "ReSign");
         plist_dict_set_item(item, "trusted", plist_new_bool(result == 0));
@@ -49,15 +65,17 @@ char *rs_devices_json(char **error) {
             copy_value(item, "productType", client, "ProductType");
             copy_value(item, "osVersion", client, "ProductVersion");
         } else {
-            char message[160];
-            snprintf(message, sizeof(message), "请解锁设备并信任这台 Mac（连接错误 %d）", result);
+            char message[512];
+            snprintf(message, sizeof(message), network
+                     ? "局域网连接失败：请确认设备与 Mac 在同一局域网并解锁设备；必要时通过 USB 重新信任，并在 Finder 中启用 Wi-Fi 显示（连接错误 %d）"
+                     : "请解锁设备并信任这台 Mac（连接错误 %d）", result);
             plist_dict_set_item(item, "connectionError", plist_new_string(message));
         }
         if (client) lockdownd_client_free(client);
         if (device) idevice_free(device);
         plist_array_append_item(array, item);
     }
-    idevice_device_list_free(udids);
+    idevice_device_list_extended_free(devices);
     char *json = NULL;
     uint32_t length = 0;
     plist_to_json(array, &json, &length, 0);
@@ -135,8 +153,8 @@ int rs_install(const char *udid, const char *ipa_path, const char *bundle_id,
         .mutex = PTHREAD_MUTEX_INITIALIZER, .condition = PTHREAD_COND_INITIALIZER,
         .complete = 0, .code = -1, .message = NULL
     };
-    int code = idevice_new_with_options(&device, udid, IDEVICE_LOOKUP_USBMUX);
-    if (code != 0) { fail(error, "设备已断开", code); goto cleanup; }
+    int code = idevice_new_with_options(&device, udid, IDEVICE_LOOKUP_USBMUX | IDEVICE_LOOKUP_NETWORK);
+    if (code != 0) { fail(error, "设备已断开，请连接 USB 或确认设备与 Mac 在同一局域网并已启用 Wi-Fi 显示", code); goto cleanup; }
     code = lockdownd_client_new_with_handshake(device, &lockdown, "ReSign");
     if (code != 0) { fail(error, "设备未解锁或信任已失效", code); goto cleanup; }
     code = lockdownd_start_service(lockdown, "com.apple.afc", &service);

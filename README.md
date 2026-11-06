@@ -1,11 +1,11 @@
 # ReSign
 
-ReSign 是使用 SwiftUI 编写的 macOS iOS 应用签名与自动续签工具。登录 Apple 开发者账号并导入 IPA 后，应用会在启动、Mac 唤醒和设备重新连接时检查临近到期的托管应用，并通过 USB 重新签名和安装。
+ReSign 是使用 SwiftUI 编写的 macOS iOS 应用签名与自动续签工具。登录 Apple 开发者账号并导入 IPA 后，应用会在启动、Mac 唤醒和设备重新连接时检查临近到期的托管应用，并通过 USB 或局域网重新签名和安装。
 
 ## 功能
 
 - 单 Apple 账号与开发团队，支持 GSA 登录和设备／短信双重认证。
-- 通过 USB 发现设备，并保存历史设备名称和 UDID。
+- 通过 USB 或局域网发现已配对设备，并保存历史设备名称和 UDID；双通道在线时优先使用 USB。
 - 导入普通 IPA，保存独立的安装源和稳定的签名 Bundle ID。
 - 从 IPA 提取并缓存主应用图标，缺失或无法解码时使用占位图。
 - 申请开发证书、注册设备和 App ID、获取及更新描述文件。
@@ -60,6 +60,15 @@ python3 scripts/package-dmg.py dist/ReSign.dmg
 4. 首次运行安装后的应用时，按 iOS 提示完成信任和开发者模式设置。
 5. 保持 ReSign 在菜单栏运行；设备在线且应用临近到期时会自动处理。
 
+### 局域网连接
+
+1. 首次通过 USB 连接 iPhone／iPad，解锁设备并信任这台 Mac。
+2. 在 Finder 侧边栏选择设备，打开“通用”，勾选“连接到 Wi-Fi 时显示此 [设备]”，点击“应用”。参见 [Apple 的 Wi-Fi 连接说明](https://support.apple.com/zh-cn/guide/mac-help/mchlada1d602/mac)。
+3. 确认设备与 Mac 位于同一局域网，拔掉 USB，在 ReSign 中点击“扫描设备”，也可等待下一轮自动扫描（每轮扫描完成后间隔 10 秒）。
+4. 设备状态显示“局域网已连接”后，即可导入、安装和自动续签；同时连接 USB 时优先使用 USB。
+
+ReSign 使用系统发现的已配对网络设备，不需要手动填写 IP。仅接入同一局域网不足以连接，必须先完成上述配对和 Finder 设置。如 macOS 提示局域网访问权限，请允许 ReSign 访问；若未发现设备，请确认 Finder 中可以无线看到设备，并排除访客网络或无线客户端隔离。网络中断会使当前安装失败，恢复连接后可重新续签。
+
 远程 Anisette 服务只参与 Anisette 身份注册和 OTP 生成，Apple 账号认证请求由客户端直接发送给 Apple。服务地址必须使用 HTTPS；明文 HTTP 仅允许 `localhost`、`127.0.0.1` 和 `::1`。
 
 ## 项目结构
@@ -102,7 +111,8 @@ swift test --filter ReSignTests
 ## 已知限制
 
 - 仅支持普通 IPA；不处理 App Extension、Watch 子应用、App Clip、符号链接、特殊文件或 FairPlay 加密的 IPA。
-- 仅支持单 Apple 账号，未实现 Wi-Fi 安装、插件注入、App Store 应用和多账号。
+- 仅支持单 Apple 账号，未实现插件注入、App Store 应用和多账号。
+- 局域网连接依赖设备与 Mac 已配对、Finder 已启用 Wi-Fi 显示以及系统能够发现设备；无线发现、安装和续签尚待真机验证。
 - 应用退出或 Mac 关机后无法续签；设备需可通信，Apple 服务需可用。
 - 令牌过期或再次要求双重认证时，需要用户重新登录。
 - 工具为导入的应用生成自己的稳定 Bundle ID，不接管其他工具安装的应用，也不迁移其应用数据。

@@ -151,9 +151,24 @@ final class ReSignTests: XCTestCase {
         XCTAssertThrowsError(try store.iconURL(for: app))
     }
 
+    func testConnectedDeviceDecodesTransportAndStatus() throws {
+        let json = """
+        [
+          {"udid":"usb-device","name":"USB iPhone","trusted":true,"connectionType":"usb"},
+          {"udid":"wifi-device","name":"Wi-Fi iPad","trusted":true,"connectionType":"network"},
+          {"udid":"offline-device","trusted":false,"connectionType":"network","connectionError":"offline"}
+        ]
+        """
+        let devices = try JSONDecoder().decode([ConnectedDevice].self, from: Data(json.utf8))
+        XCTAssertEqual(devices.count, 3)
+        XCTAssertEqual(devices[0].connectionStatus, "USB 已连接")
+        XCTAssertEqual(devices[1].connectionStatus, "局域网已连接")
+        XCTAssertEqual(devices[2].connectionStatus, "局域网连接不可用")
+    }
+
     func testNativeDeviceEnumeration() async throws {
         guard ProcessInfo.processInfo.environment["RESIGN_DEVICE_TEST"] == "1" else {
-            throw XCTSkip("Set RESIGN_DEVICE_TEST=1 to run the USB device enumeration test")
+            throw XCTSkip("Set RESIGN_DEVICE_TEST=1 to run the USB/network device enumeration test")
         }
         let devices = try await DeviceService.scan()
         XCTAssertEqual(Set(devices.map(\.udid)).count, devices.count)

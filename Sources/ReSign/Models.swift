@@ -7,14 +7,25 @@ struct ReSignError: LocalizedError, Sendable {
 }
 
 struct ConnectedDevice: Decodable, Sendable, Identifiable {
+    enum ConnectionType: String, Decodable, Sendable {
+        case usb, network
+
+        var title: String { self == .usb ? "USB 已连接" : "局域网已连接" }
+    }
+
     let udid: String
     var name: String?
     let productType: String?
     let osVersion: String?
     let trusted: Bool
+    let connectionType: ConnectionType
     let connectionError: String?
     var id: String { udid }
     var displayName: String { name ?? productType ?? "iOS 设备" }
+    var connectionStatus: String {
+        if trusted { return connectionType.title }
+        return connectionType == .usb ? "USB 连接不可用" : "局域网连接不可用"
+    }
 }
 
 struct RememberedDevice: Codable, Identifiable {

@@ -20,7 +20,7 @@ struct ContentView: View {
                                 Image(systemName: "iphone").font(.title2)
                                 VStack(alignment: .leading, spacing: 4) {
                                     Text(device.name).lineLimit(1)
-                                    Text(current == nil ? "未连接" : current!.trusted ? "USB 已连接" : "等待信任")
+                                    Text(current?.connectionStatus ?? "未连接")
                                         .font(.caption).foregroundStyle(.secondary)
                                 }
                                 Spacer(minLength: 0)
@@ -110,7 +110,7 @@ struct ContentView: View {
             ContentUnavailableView {
                 Label("还没有托管应用", systemImage: "square.stack.3d.up")
             } description: {
-                Text("通过 USB 连接设备并登录账号，导入一次 IPA，即可保存安装源并启用自动续签。")
+                Text("通过 USB 或局域网连接设备并登录账号，导入 IPA 后即可自动续签。局域网连接需先通过 USB 信任 Mac，并在 Finder 中开启“连接到 Wi-Fi 时显示此设备”。")
             }.frame(maxWidth: .infinity, minHeight: 230)
         } else {
             VStack(spacing: 12) {

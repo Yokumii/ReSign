@@ -215,7 +215,7 @@ final class AppModel: ObservableObject {
     func importIPA(_ url: URL) async {
         guard !isBusy, !isLoggingIn, let store, let account, accountReady,
               let device = selectedDevice, device.trusted else {
-            notice = "请先登录账号，并选择已通过 USB 连接和信任的 iPhone／iPad。"
+            notice = "请先登录账号，并选择已通过 USB 或局域网连接且受信任的 iPhone／iPad。"
             return
         }
         isBusy = true

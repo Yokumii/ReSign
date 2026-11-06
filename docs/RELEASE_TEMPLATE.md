@@ -1,6 +1,6 @@
 # ReSign {version}
 
-原生 macOS 的 iOS 应用签名、USB 安装与自动续签工具。
+原生 macOS 的 iOS 应用签名、USB／局域网安装与自动续签工具。
 
 ## 下载与安装
 

@@ -12,7 +12,7 @@
 `.github/workflows/ci.yml` 在推送到 main、向 main 发起 Pull Request 或手动触发时运行：
 
 1. 检查运行器、Xcode、Swift 和 Homebrew 依赖。
-2. 运行默认测试。USB、外部 Anisette 和 GSA 探测测试保持跳过。
+2. 运行默认测试。需要真实 USB／局域网设备、外部 Anisette 服务或 GSA 探测的测试保持跳过。
 3. 执行 release 构建并验证应用签名。
 4. 生成并上传 `ReSign-ci-macos-arm64.dmg` 安装镜像，保留 14 天。
 
