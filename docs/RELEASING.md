@@ -7,6 +7,7 @@
 - GitHub Actions 构建使用 xcode-27 运行器。仓库必须允许使用该运行器标签，并允许 Release 作业写入仓库内容。
 - 应用使用 ad-hoc 签名，不导入 Developer ID 证书，也不执行 Apple 公证。发布说明和 BUILD-INFO.json 必须明确记录签名状态。
 - 工作流中的第三方 Actions 固定到完整提交，构建作业只有仓库读取权限。
+
 ## CI
 
 `.github/workflows/ci.yml` 在推送到 main、向 main 发起 Pull Request 或手动触发时运行：
@@ -23,8 +24,8 @@
 推送版本标签会触发 `.github/workflows/release.yml`：
 
 ```sh
-git tag -a v1.0.0 -m "ReSign 1.0.0"
-git push origin v1.0.0
+git tag -a v1.1.0 -m "ReSign 1.1.0"
+git push origin v1.1.0
 ```
 
 流程分为两个作业：
@@ -39,7 +40,7 @@ git push origin v1.0.0
 发布说明由以下内容组成：
 
 1. `docs/RELEASE_TEMPLATE.md`：通用下载、系统要求、签名和许可证说明。
-2. `docs/releases/<版本>.md`：可选的版本补充。`1.0.0` 使用该文件记录功能和验证范围。
+2. `docs/releases/<版本>.md`：可选的版本补充。`1.1.0` 使用该文件记录功能、验证范围和限制。
 3. `scripts/generate-release-notes.py`：从上一个版本标签到当前标签的非合并提交生成分类摘要。
 
 提交信息使用 Conventional Commits：
@@ -89,7 +90,9 @@ python3 scripts/package-dmg.py dist/ReSign.dmg
 在干净且已打标签的提交上，可以使用与工作流相同的打包脚本：
 
 ```sh
-RELEASE_TAG=v1.0.0 python3 scripts/package-release.py
+RELEASE_TAG=v1.1.0 python3 scripts/package-release.py
 ```
 
 应用签名、依赖许可证收集、DMG 打包和发布附件生成逻辑分别位于 `scripts/build-app.sh`、`scripts/collect-notices.py`、`scripts/package-dmg.py` 和 `scripts/package-release.py`。
+
+设备通信动态库 `ReSignMobileDevice` 从 `Vendor/MobileDevice` 的固定源码随 SwiftPM 构建，不再链接 Homebrew 的 libimobiledevice。其源代码随项目源码包分发，许可证和来源记录复制到应用的 Licenses/ReSignMobileDevice；修改后可通过根目录构建脚本重新构建及链接。
