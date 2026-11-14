@@ -65,7 +65,9 @@ final class ReSignTests: XCTestCase {
             settings.anisetteServer = value
             XCTAssertNoThrow(try settings.validatedServerURL())
         }
-        for value in ["http://192.168.1.2:6969", "https://user:password@example.com", "https://example.com?key=secret", "ftp://example.com", ""] {
+        for value in [
+            "http://192.168.1.2:6969", "https://user:password@example.com", "https://example.com?key=secret", "ftp://example.com", "",
+        ] {
             settings.anisetteServer = value
             XCTAssertThrowsError(try settings.validatedServerURL())
         }
@@ -97,15 +99,19 @@ final class ReSignTests: XCTestCase {
     }
 
     func testIPAIconSelectsLargestPrimaryVariantAndExcludesOtherIcons() throws {
-        let plist: [String: Any] = ["CFBundleIcons": ["CFBundlePrimaryIcon": [
-            "CFBundleIconFiles": ["AppIcon60x60"], "CFBundleIconName": "AppIcon"
-        ]]]
+        let plist: [String: Any] = [
+            "CFBundleIcons": [
+                "CFBundlePrimaryIcon": [
+                    "CFBundleIconFiles": ["AppIcon60x60"], "CFBundleIconName": "AppIcon",
+                ]
+            ]
+        ]
         let ipa = try makeIPA(entries: [
             ("Payload/Test.app/Info.plist", PropertyListSerialization.data(fromPropertyList: plist, format: .binary, options: 0)),
             ("Payload/Test.app/AppIcon60x60@2x.png", makeIcon(size: 120)),
             ("Payload/Test.app/AppIcon60x60@3x.png", makeIcon(size: 180)),
             ("Payload/Test.app/AppIconAlternate.png", makeIcon(size: 512)),
-            ("Payload/Test.app/Frameworks/Other.framework/AppIcon.png", makeIcon(size: 512))
+            ("Payload/Test.app/Frameworks/Other.framework/AppIcon.png", makeIcon(size: 512)),
         ])
         let icon = try XCTUnwrap(IPAIconService.extract(from: ipa))
         let source = try XCTUnwrap(CGImageSourceCreateWithData(icon as CFData, nil))
@@ -119,12 +125,12 @@ final class ReSignTests: XCTestCase {
             ["CFBundleIconFile": "Icon.png"],
             ["CFBundleIconFiles": ["Icon"]],
             ["CFBundleIconFiles~ipad": ["Icon"]],
-            ["CFBundleIcons~ipad": ["CFBundlePrimaryIcon": ["CFBundleIconFiles": ["Icon"]]]]
+            ["CFBundleIcons~ipad": ["CFBundlePrimaryIcon": ["CFBundleIconFiles": ["Icon"]]]],
         ]
         for plist in declarations {
             let ipa = try makeIPA(entries: [
                 ("Payload/Test.app/Info.plist", PropertyListSerialization.data(fromPropertyList: plist, format: .binary, options: 0)),
-                ("Payload/Test.app/Icon@2x~ipad.png", makeIcon(size: 512))
+                ("Payload/Test.app/Icon@2x~ipad.png", makeIcon(size: 512)),
             ])
             let icon = try XCTUnwrap(IPAIconService.extract(from: ipa))
             let source = try XCTUnwrap(CGImageSourceCreateWithData(icon as CFData, nil))
@@ -153,12 +159,12 @@ final class ReSignTests: XCTestCase {
 
     func testConnectedDeviceDecodesTransportAndStatus() throws {
         let json = """
-        [
-          {"udid":"usb-device","name":"USB iPhone","trusted":true,"connectionType":"usb"},
-          {"udid":"wifi-device","name":"Wi-Fi iPad","trusted":true,"connectionType":"network"},
-          {"udid":"offline-device","trusted":false,"connectionType":"network","connectionError":"offline"}
-        ]
-        """
+            [
+              {"udid":"usb-device","name":"USB iPhone","trusted":true,"connectionType":"usb"},
+              {"udid":"wifi-device","name":"Wi-Fi iPad","trusted":true,"connectionType":"network"},
+              {"udid":"offline-device","trusted":false,"connectionType":"network","connectionError":"offline"}
+            ]
+            """
         let devices = try JSONDecoder().decode([ConnectedDevice].self, from: Data(json.utf8))
         XCTAssertEqual(devices.count, 3)
         XCTAssertEqual(devices[0].connectionStatus, "USB 已连接")
@@ -186,8 +192,9 @@ final class ReSignTests: XCTestCase {
         let server = try settings.validatedServerURL()
         let (metadata, _) = try await URLSession.shared.data(from: server.appendingPathComponent("v3/client_info"))
         let advertised = try XCTUnwrap(JSONSerialization.jsonObject(with: metadata) as? [String: String])
-        let key = AnisetteService.identityKey(server: server, clientInfo: try XCTUnwrap(advertised["client_info"]),
-                                              userAgent: try XCTUnwrap(advertised["user_agent"]))
+        let key = AnisetteService.identityKey(
+            server: server, clientInfo: try XCTUnwrap(advertised["client_info"]),
+            userAgent: try XCTUnwrap(advertised["user_agent"]))
         defer { try? vault.remove(key) }
         let firstService = AnisetteService(vault: vault)
         let first = try await firstService.fresh(settings: settings)
@@ -208,7 +215,8 @@ final class ReSignTests: XCTestCase {
 
     func testGrandSlamRejectsSyntheticCredentialsAfterAcceptingAnisette() async throws {
         guard let endpoint = ProcessInfo.processInfo.environment["RESIGN_INTEGRATION_URL"],
-              ProcessInfo.processInfo.environment["RESIGN_GSA_PROBE"] == "1" else {
+            ProcessInfo.processInfo.environment["RESIGN_GSA_PROBE"] == "1"
+        else {
             throw XCTSkip("Set RESIGN_GSA_PROBE=1 to run the synthetic-credentials authentication check")
         }
         let vault = KeychainVault(service: "io.resign.gsa-probe." + UUID().uuidString)
@@ -218,14 +226,16 @@ final class ReSignTests: XCTestCase {
         let server = try settings.validatedServerURL()
         let (metadata, _) = try await URLSession.shared.data(from: server.appendingPathComponent("v3/client_info"))
         let advertised = try XCTUnwrap(JSONSerialization.jsonObject(with: metadata) as? [String: String])
-        let key = AnisetteService.identityKey(server: server, clientInfo: try XCTUnwrap(advertised["client_info"]),
-                                              userAgent: try XCTUnwrap(advertised["user_agent"]))
+        let key = AnisetteService.identityKey(
+            server: server, clientInfo: try XCTUnwrap(advertised["client_info"]),
+            userAgent: try XCTUnwrap(advertised["user_agent"]))
         defer { try? vault.remove(key) }
         let service = SigningService(vault: vault)
         do {
-            _ = try await service.login(appleID: "resign-probe-\(UUID().uuidString.lowercased())@example.invalid",
-                                        password: UUID().uuidString, settings: settings,
-                                        verification: { _ in .cancel })
+            _ = try await service.login(
+                appleID: "resign-probe-\(UUID().uuidString.lowercased())@example.invalid",
+                password: UUID().uuidString, settings: settings,
+                verification: { _ in .cancel })
             XCTFail("Synthetic credentials must not authenticate")
         } catch let error as DeveloperPortalError {
             switch error {
@@ -238,13 +248,17 @@ final class ReSignTests: XCTestCase {
     }
 
     private func sampleApp() -> ManagedApp {
-        ManagedApp(deviceID: "test-device", teamID: "TESTTEAM01", name: "Test", version: "1.0", buildVersion: "1",
-                   originalBundleID: "com.example.test", bundleID: "io.resign.test", ipaFilename: "test.ipa")
+        ManagedApp(
+            deviceID: "test-device", teamID: "TESTTEAM01", name: "Test", version: "1.0", buildVersion: "1",
+            originalBundleID: "com.example.test", bundleID: "io.resign.test", ipaFilename: "test.ipa")
     }
 
     private func basicEntries(encrypted: Bool = false) throws -> [(String, Data)] {
-        let info: [String: Any] = ["CFBundleIdentifier": "com.example.test", "CFBundleVersion": "1",
-                                   "CFBundleExecutable": "Test", "CFBundleSupportedPlatforms": ["iPhoneOS"]]
+        let info: [String: Any] = [
+            "CFBundleIdentifier": "com.example.test", "CFBundleVersion": "1",
+            "CFBundleExecutable": "Test", "CFBundleSupportedPlatforms": ["iPhoneOS"],
+            "CFBundlePackageType": "APPL",
+        ]
         let plist = try PropertyListSerialization.data(fromPropertyList: info, format: .binary, options: 0)
         var words: [UInt32] = [0xfeedfacf, 0x0100000c, 0, 2, encrypted ? 1 : 0, encrypted ? 24 : 0, 0, 0]
         if encrypted { words += [0x2c, 24, 0, 0, 1, 0] }
@@ -264,9 +278,11 @@ final class ReSignTests: XCTestCase {
     }
 
     private func makeIcon(size: Int) throws -> Data {
-        let context = try XCTUnwrap(CGContext(data: nil, width: size, height: size, bitsPerComponent: 8,
-                                            bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
-                                            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        let context = try XCTUnwrap(
+            CGContext(
+                data: nil, width: size, height: size, bitsPerComponent: 8,
+                bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
         context.setFillColor(CGColor(red: 1, green: 0, blue: 0, alpha: 1))
         context.fill(CGRect(x: 0, y: 0, width: size, height: size))
         let image = try XCTUnwrap(context.makeImage())

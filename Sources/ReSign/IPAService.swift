@@ -6,6 +6,29 @@ struct IPAInfo: Sendable {
     let bundleID: String
     let version: String
     let buildVersion: String
+    let components: [IPAComponent]
+
+    func signingTargets(mainBundleID: String) throws -> [IPASigningTarget] {
+        try components.map { component in
+            let suffix = String(component.bundleID.dropFirst(bundleID.count))
+            let identifier = mainBundleID + suffix
+            guard identifier.utf8.count <= 255 else {
+                throw ReSignError("重签后的 Bundle ID 过长：\(component.bundleID)。")
+            }
+            return IPASigningTarget(component: component, bundleID: identifier)
+        }
+    }
+}
+
+struct IPAComponent: Sendable {
+    let url: URL
+    let bundleID: String
+    let appGroups: [String]
+}
+
+struct IPASigningTarget: Sendable {
+    let component: IPAComponent
+    let bundleID: String
 }
 
 enum IPAService {
@@ -20,8 +43,9 @@ enum IPAService {
             let parts = name.split(separator: "/", omittingEmptySubsequences: false)
             let target = directory.appendingPathComponent(name).standardizedFileURL.path
             guard !name.hasPrefix("/"), !name.contains("\\"), !name.contains("\0"),
-                  !parts.contains(".."), !parts.contains("."), target.hasPrefix(rootPath),
-                  seen.insert(target).inserted else { throw ReSignError("IPA 包含无效或重复的文件路径。") }
+                !parts.contains(".."), !parts.contains("."), target.hasPrefix(rootPath),
+                seen.insert(target).inserted
+            else { throw ReSignError("IPA 包含无效或重复的文件路径。") }
             let type = (entry.externalAttributes >> 16) & 0o170000
             guard type == 0 || type == 0o040000 || type == 0o100000 else {
                 throw ReSignError("不支持包含符号链接或特殊文件的 IPA。")
@@ -42,25 +66,98 @@ enum IPAService {
     }
 
     static func inspect(_ app: URL) throws -> IPAInfo {
+        try rejectEmbeddedApps(in: app)
+        let plist = try readPlist(app)
+        let main = try inspectComponent(app, plist: plist)
+        guard plist["CFBundlePackageType"] as? String == "APPL", plist["NSExtension"] == nil,
+            let build = plist["CFBundleVersion"] as? String
+        else {
+            throw ReSignError("IPA 主应用配置无效。")
+        }
+        var components = [main]
+        var identifiers: Set<String> = [main.bundleID.lowercased()]
+        let plugins = app.appendingPathComponent("PlugIns", isDirectory: true)
         let fm = FileManager.default
-        for name in ["PlugIns", "Watch", "AppClips"] {
-            let path = app.appendingPathComponent(name)
-            if fm.fileExists(atPath: path.path), !(try fm.contentsOfDirectory(atPath: path.path)).isEmpty {
-                throw ReSignError("仅支持普通 IPA；不支持扩展、Watch 应用或 App Clip。")
+        if fm.fileExists(atPath: plugins.path) {
+            let extensions = try fm.contentsOfDirectory(at: plugins, includingPropertiesForKeys: [.isDirectoryKey])
+                .sorted { $0.lastPathComponent < $1.lastPathComponent }
+            for ext in extensions {
+                guard ext.pathExtension == "appex", try ext.resourceValues(forKeys: [.isDirectoryKey]).isDirectory == true else {
+                    throw ReSignError("PlugIns 中仅支持分享扩展：\(ext.lastPathComponent)。")
+                }
+                try rejectEmbeddedApps(in: ext)
+                let nestedPlugins = ext.appendingPathComponent("PlugIns")
+                if fm.fileExists(atPath: nestedPlugins.path), !(try fm.contentsOfDirectory(atPath: nestedPlugins.path)).isEmpty {
+                    throw ReSignError("不支持嵌套的 App Extension。")
+                }
+                let extPlist = try readPlist(ext)
+                let configuration = extPlist["NSExtension"] as? [String: Any]
+                guard extPlist["CFBundlePackageType"] as? String == "XPC!",
+                    configuration?["NSExtensionPointIdentifier"] as? String == "com.apple.share-services"
+                else {
+                    throw ReSignError("仅支持分享扩展，不支持此 App Extension：\(ext.lastPathComponent)。")
+                }
+                let component = try inspectComponent(ext, plist: extPlist)
+                guard component.bundleID.hasPrefix(main.bundleID + "."),
+                    identifiers.insert(component.bundleID.lowercased()).inserted
+                else {
+                    throw ReSignError("分享扩展的 Bundle ID 必须以主应用 ID 加点号开头，且不能重复：\(component.bundleID)。")
+                }
+                guard (extPlist["CFBundleVersion"] as? String) == build,
+                    (extPlist["CFBundleShortVersionString"] as? String) == (plist["CFBundleShortVersionString"] as? String)
+                else {
+                    throw ReSignError("分享扩展与主应用的版本号不一致：\(component.bundleID)。")
+                }
+                components.append(component)
             }
         }
-        let plist = try readPlist(app)
-        guard let bundleID = plist["CFBundleIdentifier"] as? String, !bundleID.isEmpty,
-              let build = plist["CFBundleVersion"] as? String, !build.isEmpty,
-              let executable = plist["CFBundleExecutable"] as? String,
-              !executable.contains("/"), executable != ".", executable != "..",
-              let platforms = plist["CFBundleSupportedPlatforms"] as? [String], platforms.contains("iPhoneOS") else {
+        let name = plist["CFBundleDisplayName"] as? String ?? plist["CFBundleName"] as? String ?? main.bundleID
+        return IPAInfo(
+            name: name, bundleID: main.bundleID,
+            version: plist["CFBundleShortVersionString"] as? String ?? build,
+            buildVersion: build, components: components)
+    }
+
+    private static func rejectEmbeddedApps(in app: URL) throws {
+        let fm = FileManager.default
+        for name in ["Watch", "AppClips"] {
+            let path = app.appendingPathComponent(name)
+            if fm.fileExists(atPath: path.path), !(try fm.contentsOfDirectory(atPath: path.path)).isEmpty {
+                throw ReSignError("不支持 Watch 应用或 App Clip。")
+            }
+        }
+    }
+
+    private static func inspectComponent(_ app: URL, plist: [String: Any]) throws -> IPAComponent {
+        guard let bundleID = plist["CFBundleIdentifier"] as? String, validBundleID(bundleID),
+            let build = plist["CFBundleVersion"] as? String, !build.isEmpty,
+            let executable = plist["CFBundleExecutable"] as? String, !executable.isEmpty,
+            !executable.contains("/"), !executable.contains("\\"), !executable.contains("\0"),
+            executable != ".", executable != "..",
+            let platforms = plist["CFBundleSupportedPlatforms"] as? [String], platforms.contains("iPhoneOS")
+        else {
             throw ReSignError("应用配置不完整，或不是可在 iPhone／iPad 上运行的应用。")
         }
         try requireUnencrypted(app.appendingPathComponent(executable))
-        let name = plist["CFBundleDisplayName"] as? String ?? plist["CFBundleName"] as? String ?? bundleID
-        return IPAInfo(name: name, bundleID: bundleID,
-                       version: plist["CFBundleShortVersionString"] as? String ?? build, buildVersion: build)
+        let entitlements = try AppBundle.readSigningEntitlements(at: app)
+        var groups: [String] = []
+        if let value = entitlements["com.apple.security.application-groups"] {
+            guard let values = value as? [String], Set(values).count == values.count,
+                values.allSatisfy({ $0.hasPrefix("group.") && validBundleID($0) })
+            else {
+                throw ReSignError("应用的 App Groups 配置无效：\(bundleID)。")
+            }
+            groups = values.sorted()
+        }
+        return IPAComponent(url: app, bundleID: bundleID, appGroups: groups)
+    }
+
+    private static func validBundleID(_ identifier: String) -> Bool {
+        let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-")
+        return !identifier.isEmpty && identifier.utf8.count <= 255
+            && identifier.split(separator: ".", omittingEmptySubsequences: false).allSatisfy {
+                !$0.isEmpty && $0.unicodeScalars.allSatisfy { allowed.contains($0) }
+            }
     }
 
     static func rewriteBundleID(at app: URL, to identifier: String) throws {

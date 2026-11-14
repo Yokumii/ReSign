@@ -13,6 +13,8 @@
 4. `Sources/CodeSigning/CodeSignerAPI.swift`：找不到精确 Bundle ID 对应描述文件时返回缺失错误，不使用第一个描述文件兜底。
 5. `Sources/Constants.swift` 与 `Sources/DeveloperPortal/Authentication.swift`：将实际收到的 `-20970`（账户信息不正确）归类为凭据错误，避免把它当成未知服务错误。
 6. `Sources/DeveloperPortal/Authentication.swift`：请求的 User-Agent 跟随传入的 Anisette 身份；未知 Apple 错误携带握手／密码／签名令牌阶段。注册、密码登录和令牌申请使用同一提供方身份，不做 Windows → Mac 声明切换或自动重试。
+7. `Sources/Models/AppBundle.swift`、`Sources/CodeSigning/CodeSignerAPI.swift`：统一读取 Mach-O 中的签名权限；签名时校验 App Groups 是否已获描述文件授权，仅写入应用请求的共享组。
+8. `Sources/CodeSigning/CodeSignerAPI.swift`：扩展权限仅匹配对应扩展目录或可执行文件路径；优先识别内嵌 framework 与 dylib，避免依赖库继承扩展权限。
 
 未修改 SRP、令牌解密算法或代码签名格式实现。认证请求行为由 `Tests/ReSignTests/AuthenticationRequestTests.swift` 覆盖；真实账号与真机验证状态见 [docs/TESTING.md](../../docs/TESTING.md)。
 

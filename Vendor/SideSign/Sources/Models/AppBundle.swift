@@ -65,7 +65,7 @@ public struct AppBundle: Sendable, Identifiable, Hashable, Equatable {
             fileURL.appendingPathComponent("\(iconName)@3x.png"),
             fileURL.appendingPathComponent("\(iconName)@2x.png"),
             fileURL.appendingPathComponent("\(iconName).png"),
-            fileURL.appendingPathComponent(iconName)
+            fileURL.appendingPathComponent(iconName),
         ]
 
         return candidates.first { FileManager.default.fileExists(atPath: $0.path) }
@@ -77,12 +77,13 @@ public struct AppBundle: Sendable, Identifiable, Hashable, Equatable {
         }
 
         guard let parser = try? InfoPlistParser(bundleURL: fileURL),
-              let bundleIdentifier = parser.bundleIdentifier
+            let bundleIdentifier = parser.bundleIdentifier
         else {
             return nil
         }
 
-        let name = parser.displayName
+        let name =
+            parser.displayName
             ?? parser.bundleName
             ?? fileURL.deletingPathExtension().lastPathComponent
 
@@ -118,14 +119,17 @@ public struct AppBundle: Sendable, Identifiable, Hashable, Equatable {
 
     private func loadExtensions() -> Set<AppBundle> {
         let pluginsURL = fileURL.appendingPathComponent("PlugIns")
-        guard let contents = try? FileManager.default.contentsOfDirectory(
-            at: pluginsURL,
-            includingPropertiesForKeys: nil,
-            options: [.skipsHiddenFiles]
-        ) else {
+        guard
+            let contents = try? FileManager.default.contentsOfDirectory(
+                at: pluginsURL,
+                includingPropertiesForKeys: nil,
+                options: [.skipsHiddenFiles]
+            )
+        else {
             return []
         }
-        let extensions = contents
+        let extensions =
+            contents
             .filter { $0.pathExtension.lowercased() == "appex" }
             .compactMap { AppBundle(fileURL: $0) }
         return Set(extensions)
@@ -133,8 +137,9 @@ public struct AppBundle: Sendable, Identifiable, Hashable, Equatable {
 
     private func loadEntitlements() -> [String: any Sendable] {
         if !entitlementsString.isEmpty,
-           let data = entitlementsString.data(using: .utf8),
-           let plist = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil) as? [String: any Sendable] {
+            let data = entitlementsString.data(using: .utf8),
+            let plist = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil) as? [String: any Sendable]
+        {
             return plist
         }
 
@@ -143,6 +148,17 @@ public struct AppBundle: Sendable, Identifiable, Hashable, Equatable {
 
     private func loadEntitlementsString() -> String {
         (try? MachOParser.entitlements(at: fileURL)) ?? ""
+    }
+
+    public static func readSigningEntitlements(at url: URL) throws -> [String: any Sendable] {
+        let string = try MachOParser.entitlements(at: url)
+        guard !string.isEmpty else { return [:] }
+        guard let data = string.data(using: .utf8),
+            let entitlements = try PropertyListSerialization.propertyList(from: data, format: nil) as? [String: any Sendable]
+        else {
+            throw SignerError.invalidApp(cause: "Invalid entitlements at \(url.lastPathComponent)")
+        }
+        return entitlements
     }
 }
 
@@ -218,7 +234,8 @@ public extension AppBundle {
     }
 
     var allAppBundles: [AppBundle] {
-        [self] + Array(appExtensions).sorted { $0.bundleIdentifier.localizedCaseInsensitiveCompare($1.bundleIdentifier) == .orderedAscending }
+        [self]
+            + Array(appExtensions).sorted { $0.bundleIdentifier.localizedCaseInsensitiveCompare($1.bundleIdentifier) == .orderedAscending }
     }
 
     func appExtension(withBundleIdentifier id: String) -> AppBundle? {

@@ -60,8 +60,7 @@ public struct AppBundleSigner: CodeSignerAPI, Sendable {
         self.keyStore = keyStore
     }
 
-    public func signApp(at appURL: URL, provisioningProfiles profiles: [ProvisioningProfile], progress: Progress? = nil) async throws
-    {
+    public func signApp(at appURL: URL, provisioningProfiles profiles: [ProvisioningProfile], progress: Progress? = nil) async throws {
         debugLog("[SideSign] AppBundleSigner.signApp called")
         verboseLog("[SideSign] URL: \(appURL.path), Profiles: \(profiles.map { "\($0.name) (\($0.bundleIdentifier))" })")
 
@@ -95,7 +94,22 @@ public struct AppBundleSigner: CodeSignerAPI, Sendable {
             var filteredEntitlements = matchedProfile.entitlements
             verboseLog("[SideSign] Original profile entitlements: \(filteredEntitlements)")
 
-            let applicationEntitlements = app.entitlements
+            let applicationEntitlements = try AppBundle.readSigningEntitlements(at: app.fileURL)
+            let appGroupsKey = "com.apple.security.application-groups"
+            if let value = applicationEntitlements[appGroupsKey] {
+                let authorized = matchedProfile.entitlements[appGroupsKey] as? [String] ?? []
+                guard let requested = value as? [String],
+                    Set(requested).isSubset(of: Set(authorized))
+                else {
+                    throw SignerError.invalidApp(
+                        cause: "Provisioning profile does not authorize the app groups for \(app.bundleIdentifier)")
+                }
+                if requested.isEmpty {
+                    filteredEntitlements.removeValue(forKey: appGroupsKey)
+                } else {
+                    filteredEntitlements[appGroupsKey] = requested
+                }
+            }
 
             for (key, _) in filteredEntitlements {
                 if let applicationValue = applicationEntitlements[key] {
@@ -109,15 +123,13 @@ public struct AppBundleSigner: CodeSignerAPI, Sendable {
                             guard let separator = group.firstIndex(of: ".") else {
                                 debugLog("[SideSign] The keychain access group does not contain a Team ID prefix")
                                 verboseLog("[SideSign] Group: '\(group)'")
-                                throw SignerError.invalidApp(cause: "The keychain access group '\(group)' does not contain a Team ID prefix.")
+                                throw SignerError.invalidApp(
+                                    cause: "The keychain access group '\(group)' does not contain a Team ID prefix.")
                             }
                             return matchedProfile.teamIdentifier + group[separator...]
                         }
                     }
-                } else if key != "application-identifier"               &&
-                          key != "com.apple.developer.team-identifier"  &&
-                          key != "get-task-allow" 
-                {
+                } else if key != "application-identifier" && key != "com.apple.developer.team-identifier" && key != "get-task-allow" {
                     filteredEntitlements.removeValue(forKey: key)
                 }
             }
@@ -168,18 +180,25 @@ public struct AppBundleSigner: CodeSignerAPI, Sendable {
                         targetType = .mainAppBundleDirectory
                         xml = entitlementsByURL[appResolved] ?? ""
                     } else {
-                        let url: URL = normPath.hasPrefix("/") ? URL(fileURLWithPath: normPath) : appBundle.fileURL.appendingPathComponent(normPath)
+                        let url: URL =
+                            normPath.hasPrefix("/") ? URL(fileURLWithPath: normPath) : appBundle.fileURL.appendingPathComponent(normPath)
                         let resolved = url.resolvingSymlinksInPath()
 
                         if resolved == appResolved {
                             targetType = .mainAppBundleDirectory
                             xml = entitlementsByURL[appResolved] ?? ""
+                        } else if resolved.pathExtension.lowercased() == "framework" || resolved.path.contains(".framework/")
+                            || resolved.pathExtension.lowercased() == "dylib"
+                        {
+                            targetType = resolved.pathExtension.lowercased() == "dylib" ? .dylib : .framework
+                            xml = ""
                         } else if let matchedExt = appBundle.appExtensions.first(where: { ext in
                             let extResolved = ext.fileURL.resolvingSymlinksInPath()
-                            return resolved == extResolved ||
-                                   resolved.path.hasPrefix(extResolved.path + "/") ||
-                                   resolved.lastPathComponent == extResolved.lastPathComponent ||
-                                   resolved.deletingPathExtension().lastPathComponent == extResolved.deletingPathExtension().lastPathComponent
+                            let executable = ext.infoPlist["CFBundleExecutable"] as? String
+                            return resolved == extResolved
+                                || executable.map {
+                                    resolved == extResolved.appendingPathComponent($0)
+                                } == true
                         }) {
                             let extResolved = matchedExt.fileURL.resolvingSymlinksInPath()
                             if resolved == extResolved {
@@ -188,14 +207,7 @@ public struct AppBundleSigner: CodeSignerAPI, Sendable {
                                 targetType = .appExtensionExecutable(identifier: matchedExt.bundleIdentifier)
                             }
                             xml = entitlementsByURL[extResolved] ?? ""
-                        } else if resolved.pathExtension.lowercased() == "framework" || resolved.path.contains(".framework") {
-                            targetType = .framework
-                            xml = ""
-                        } else if resolved.pathExtension.lowercased() == "dylib" || resolved.lastPathComponent.hasSuffix(".dylib") {
-                            targetType = .dylib
-                            xml = ""
-                        } else if resolved.deletingLastPathComponent() == appResolved ||
-                                  resolved.path.hasPrefix(appResolved.path + "/") {
+                        } else if resolved.deletingLastPathComponent() == appResolved || resolved.path.hasPrefix(appResolved.path + "/") {
                             targetType = .mainAppExecutable
                             xml = entitlementsByURL[appResolved] ?? ""
                         } else {
@@ -205,7 +217,8 @@ public struct AppBundleSigner: CodeSignerAPI, Sendable {
                     }
 
                     let xmlStatus = xml.isEmpty ? "none" : "present (\(xml.count) bytes)"
-                    verboseLog("[SideSign] AppBundleSigner entitlementProvider queried path: '\(path)' [Type: \(targetType)], xml: \(xmlStatus)")
+                    verboseLog(
+                        "[SideSign] AppBundleSigner entitlementProvider queried path: '\(path)' [Type: \(targetType)], xml: \(xmlStatus)")
                     return xml
                 },
                 progress: {
