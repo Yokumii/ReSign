@@ -28,6 +28,14 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Frameworks" "$APP/Contents/Resourc
 cp "$BIN_DIR/ReSign" "$APP/Contents/MacOS/ReSign"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
+# Build the iOS helper separately; it is embedded and signed only in apps needing App Group remapping.
+GROUP_RUNTIME="$APP/Contents/Resources/ReSignAppGroups.framework"
+mkdir -p "$GROUP_RUNTIME"
+cp Resources/AppGroupRuntime/Info.plist "$GROUP_RUNTIME/Info.plist"
+xcrun --sdk iphoneos clang -dynamiclib -fobjc-arc -fapplication-extension \
+    -arch arm64 -arch arm64e -miphoneos-version-min=12.0 -framework Foundation \
+    -install_name '@rpath/ReSignAppGroups.framework/ReSignAppGroups' \
+    Resources/AppGroupRuntime/ReSignAppGroups.m -o "$GROUP_RUNTIME/ReSignAppGroups"
 if [[ -n "${RESIGN_BUILD_NUMBER:-}" ]]; then
     /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $RESIGN_BUILD_NUMBER" "$APP/Contents/Info.plist"
 fi

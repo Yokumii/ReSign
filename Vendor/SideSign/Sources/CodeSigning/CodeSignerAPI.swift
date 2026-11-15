@@ -25,6 +25,7 @@ public extension CodeSignerAPI {
 public struct AppBundleSigner: CodeSignerAPI, Sendable {
     public let team: Team
     public let keyStore: KeyStore
+    public let appGroupIdentifiers: [String: String]?
 
     private enum SigningTargetType: CustomStringConvertible {
         case mainAppBundleDirectory
@@ -55,9 +56,10 @@ public struct AppBundleSigner: CodeSignerAPI, Sendable {
         }
     }
 
-    public init(team: Team, keyStore: KeyStore) {
+    public init(team: Team, keyStore: KeyStore, appGroupIdentifiers: [String: String]? = nil) {
         self.team = team
         self.keyStore = keyStore
+        self.appGroupIdentifiers = appGroupIdentifiers
     }
 
     public func signApp(at appURL: URL, provisioningProfiles profiles: [ProvisioningProfile], progress: Progress? = nil) async throws {
@@ -96,11 +98,32 @@ public struct AppBundleSigner: CodeSignerAPI, Sendable {
 
             let applicationEntitlements = try AppBundle.readSigningEntitlements(at: app.fileURL)
             let appGroupsKey = "com.apple.security.application-groups"
+            if app.isExtension {
+                let managedKeys: Set<String> = [
+                    "application-identifier", "com.apple.developer.team-identifier",
+                    "get-task-allow", "keychain-access-groups", appGroupsKey,
+                ]
+                let missing = applicationEntitlements.keys.filter {
+                    !managedKeys.contains($0) && matchedProfile.entitlements[$0] == nil
+                }.sorted()
+                guard missing.isEmpty else {
+                    throw SignerError.invalidApp(
+                        cause: "扩展 \(app.bundleIdentifier) 的描述文件未授权所需权限：\(missing.joined(separator: ", "))。请为当前团队的扩展 App ID 配置相应能力，或重新构建不依赖这些权限的应用。")
+                }
+            }
             if let value = applicationEntitlements[appGroupsKey] {
                 let authorized = matchedProfile.entitlements[appGroupsKey] as? [String] ?? []
-                guard let requested = value as? [String],
-                    Set(requested).isSubset(of: Set(authorized))
-                else {
+                guard let original = value as? [String] else {
+                    throw SignerError.invalidApp(cause: "Invalid app groups for \(app.bundleIdentifier)")
+                }
+                let requested = try original.map { identifier in
+                    guard let appGroupIdentifiers else { return identifier }
+                    guard let mapped = appGroupIdentifiers[identifier] else {
+                        throw SignerError.invalidApp(cause: "Missing app group mapping for \(identifier)")
+                    }
+                    return mapped
+                }
+                guard Set(requested).isSubset(of: Set(authorized)) else {
                     throw SignerError.invalidApp(
                         cause: "Provisioning profile does not authorize the app groups for \(app.bundleIdentifier)")
                 }
@@ -120,6 +143,7 @@ public struct AppBundleSigner: CodeSignerAPI, Sendable {
                         }
 
                         filteredEntitlements[key] = try groups.map { group in
+                            if let mapped = appGroupIdentifiers?[group] { return mapped }
                             guard let separator = group.firstIndex(of: ".") else {
                                 debugLog("[SideSign] The keychain access group does not contain a Team ID prefix")
                                 verboseLog("[SideSign] Group: '\(group)'")

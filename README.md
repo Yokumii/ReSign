@@ -6,9 +6,9 @@ ReSign 是使用 SwiftUI 编写的 macOS iOS 应用签名与自动续签工具�
 
 - 单 Apple 账号与开发团队，支持 GSA 登录和设备／短信双重认证。
 - 通过 USB 或局域网连接已配对设备；自动发现不可用时可直接填写 IP，双通道在线时优先使用 USB。
-- 导入普通 IPA 或带分享扩展的 IPA，保存独立的安装源和稳定的签名 Bundle ID。
+- 导入普通 IPA 或带 App Extension 的 IPA，保存独立的安装源和稳定的签名 Bundle ID。
 - 从 IPA 提取并缓存主应用图标，缺失或无法解码时使用占位图。
-- 申请开发证书、注册设备，为主应用和分享扩展分别注册 App ID、获取及更新描述文件。
+- 申请开发证书、注册设备，为主应用和各 App Extension 分别注册 App ID、获取及更新描述文件。
 - 使用 SideSign／CodeSignKit 重签，并通过 AFC／Installation Proxy 安装或覆盖更新。
 - 默认在剩余不足 48 小时时续签，可在 12～72 小时内调整。
 - 启动、设备连接恢复、Mac 唤醒和定时任务均可触发续签检查。
@@ -18,7 +18,7 @@ ReSign 是使用 SwiftUI 编写的 macOS iOS 应用签名与自动续签工具�
 ## 环境要求
 
 - macOS 27+
-- 支持 Swift 6 的 Xcode
+- 支持 Swift 6、包含 iPhoneOS 设备 SDK 的完整 Xcode（构建共享组兼容组件时需要）
 - Homebrew
 - `libplist`、`libusbmuxd`、`libimobiledevice-glue`、`openssl@4`、`pkgconf`
 - 构建时使用 Python 3；应用运行时不需要 Python
@@ -56,17 +56,18 @@ python3 scripts/package-dmg.py dist/ReSign.dmg
 
 1. 打开 `dist/ReSign.app`，连接并解锁 iPhone／iPad，按设备提示信任 Mac。
 2. 在设置中填写 Anisette v3 服务根地址，登录 Apple 账号并选择开发团队。
-3. 在设备列表中选择设备，导入可重签的普通 IPA 或带分享扩展的 IPA。
+3. 在设备列表中选择设备，导入可重签的普通 IPA 或带 App Extension 的 IPA。
 4. 首次运行安装后的应用时，按 iOS 提示完成信任和开发者模式设置。
 5. 保持 ReSign 在菜单栏运行；设备在线且应用临近到期时会自动处理。
 
-### 分享扩展
+### App Extension
 
-支持 `PlugIns/*.appex` 中类型为 `com.apple.share-services` 的分享扩展：
+支持随主应用嵌入 `PlugIns/*.appex`、通过 `NSExtension` 声明的标准 iOS App Extension，包括分享、Action、WidgetKit、通知服务／通知内容、自定义键盘、照片编辑、Intents 等扩展类型：
 
 - **多组件签名**：主应用与各扩展分别使用独立的稳定 Bundle ID 与描述文件，扩展 ID 保留原主应用 ID 后的后缀。
-- **App Groups 支持**：保留原应用声明的 App Group，在当前开发团队中自动注册或复用共享组，并为所需组件申请授权。若原组名被其他团队占用，需使用可访问该共享组的团队或重新构建应用。
-- **版本一致性**：扩展与主应用版本号须保持一致，且所有组件均须未加密。
+- **扩展与 Widget 引用**：保留 `NSExtension` 配置，并同步重写主应用中对内嵌 Widget 的 Bundle ID 引用。
+- **App Groups 映射与兼容**：当前团队已拥有的共享组继续复用；其他组自动映射为稳定的 `group.io.resign.<团队 ID>.<原组名摘要>` 并在当前团队下注册。若涉及组名变更，将在工作副本中为组件注入专用兼容库，重定向标准 `FileManager` 共享容器与 `UserDefaults` suite 访问。
+- **版本同步**：允许导入扩展与主应用版本不一致的 IPA，签名时自动将各扩展版本同步为主应用版本。
 - **自动续签**：以证书及所有组件描述文件中最早的到期时间为准。
 
 ### 局域网连接
@@ -132,8 +133,8 @@ swift test --filter ReSignTests
 
 ## 已知限制
 
-- 支持普通 IPA 和分享扩展；不处理其他 App Extension、嵌套扩展、Watch 子应用、App Clip、符号链接、特殊文件或 FairPlay 加密的 IPA。
-- 仅支持单 Apple 账号，未实现插件注入、App Store 应用和多账号。
+- 支持普通 IPA 和通过 `NSExtension` 声明的单层 App Extension；不处理 ExtensionKit 扩展、嵌套扩展、Watch 子应用／WatchKit 扩展、App Clip、符号链接、特殊文件或 FairPlay 加密的 IPA。
+- 仅支持单 Apple 账号，未实现 App Store 应用和多账号；共享组兼容库仅用于 App Groups 访问重定向，不提供通用插件注入功能。
 - 局域网连接依赖设备与 Mac 已配对且 Finder 已启用 Wi-Fi 显示；自动连接还需系统能够发现设备。
 - 应用退出或 Mac 关机后无法续签；设备需可通信，Apple 服务需可用。
 - 令牌过期或再次要求双重认证时，需要用户重新登录。

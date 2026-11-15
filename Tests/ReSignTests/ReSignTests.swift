@@ -89,7 +89,7 @@ final class ReSignTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("escaped.txt").path))
     }
 
-    func testIPARejectsEncryptedExecutableAndUnsupportedExtensions() throws {
+    func testIPARejectsEncryptedExecutableAndMalformedExtensions() throws {
         let encrypted = try makeIPA(entries: basicEntries(encrypted: true))
         let app = try IPAService.extract(encrypted, into: root.appendingPathComponent("encrypted"))
         XCTAssertThrowsError(try IPAService.inspect(app))

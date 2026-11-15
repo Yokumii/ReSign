@@ -3,11 +3,11 @@ import XCTest
 import SideSign
 @testable import ReSign
 
-final class IPAShareExtensionTests: XCTestCase {
+final class IPAExtensionTests: XCTestCase {
     private var root: URL!
 
     override func setUpWithError() throws {
-        root = FileManager.default.temporaryDirectory.appendingPathComponent("ReSignShareTests-" + UUID().uuidString)
+        root = FileManager.default.temporaryDirectory.appendingPathComponent("ReSignExtensionTests-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     }
 
@@ -24,9 +24,7 @@ final class IPAShareExtensionTests: XCTestCase {
         let targets = try info.signingTargets(mainBundleID: mainID)
         XCTAssertEqual(targets.map(\.bundleID), [mainID, mainID + ".Other", mainID + ".Share"])
         XCTAssertEqual(try info.signingTargets(mainBundleID: mainID).map(\.bundleID), targets.map(\.bundleID))
-        for target in targets {
-            try IPAService.rewriteBundleID(at: target.component.url, to: target.bundleID)
-        }
+        try IPAService.rewriteBundleIDs(targets)
         let rewritten = try IPAService.inspect(app)
         XCTAssertEqual(rewritten.components.map(\.bundleID), targets.map(\.bundleID))
         let plist = try readPlist(app.appendingPathComponent("PlugIns/Share.appex"))
@@ -35,12 +33,63 @@ final class IPAShareExtensionTests: XCTestCase {
         XCTAssertEqual(configuration["NSExtensionPrincipalClass"] as? String, "Share.ViewController")
     }
 
-    func testRejectsOtherExtensionTypesAndEncryptedShareExecutables() throws {
+    func testMixedExtensionTypesPreserveConfigurationAndRewriteWidgetReference() throws {
+        let app = try makeApp()
+        let extensionPoints = [
+            "com.apple.share-services", "com.apple.ui-services", "com.apple.widgetkit-extension",
+            "com.apple.usernotifications.service", "com.apple.usernotifications.content-extension",
+            "com.apple.keyboard-service", "com.apple.photo-editing", "com.apple.intents-service",
+        ]
+        var configurations: [URL: NSDictionary] = [:]
+        for (index, point) in extensionPoints.enumerated() {
+            let ext = try makeExtension(
+                in: app, name: "Extension\(index)", identifier: "com.example.test.Extension\(index)",
+                extensionPoint: point)
+            let configuration: [String: Any] = [
+                "NSExtensionPointIdentifier": point,
+                "NSExtensionPrincipalClass": "Extension\(index).Handler",
+                "NSExtensionAttributes": ["CustomAttribute": ["value"]],
+            ]
+            try writePlist(at: ext, changes: ["NSExtension": configuration])
+            configurations[ext] = configuration as NSDictionary
+        }
+        try writePlist(at: app, changes: ["UIApplicationShortcutWidget": "com.example.test.Extension2"])
+        let info = try IPAService.inspect(app)
+        let mainID = SigningService.bundleID(original: info.bundleID, team: "TESTTEAM01")
+        let targets = try info.signingTargets(mainBundleID: mainID)
+        XCTAssertEqual(targets.count, extensionPoints.count + 1)
+        try IPAService.rewriteBundleIDs(targets)
+        XCTAssertEqual(try IPAService.inspect(app).components.map(\.bundleID), targets.map(\.bundleID))
+        XCTAssertEqual(try readPlist(app)["UIApplicationShortcutWidget"] as? String, mainID + ".Extension2")
+        for (ext, configuration) in configurations {
+            XCTAssertEqual(try readPlist(ext)["NSExtension"] as? NSDictionary, configuration)
+        }
+    }
+
+    func testRejectsInvalidExtensionConfigurations() throws {
+        let app = try makeApp()
+        let ext = try makeExtension(in: app, name: "Extension", identifier: "com.example.test.Extension")
+        let invalidConfigurations: [Any] = [
+            "invalid", [String: String](),
+            ["NSExtensionPointIdentifier": ""], ["NSExtensionPointIdentifier": 42],
+            ["NSExtensionPointIdentifier": "com..example"],
+            ["NSExtensionPointIdentifier": "com.apple.widgetkit-extension "],
+            ["NSExtensionPointIdentifier": "com.apple.watchkit"],
+        ]
+        for configuration in invalidConfigurations {
+            try writePlist(at: ext, changes: ["NSExtension": configuration])
+            XCTAssertThrowsError(try IPAService.inspect(app))
+        }
+        try writePlist(at: ext, changes: [
+            "NSExtension": ["NSExtensionPointIdentifier": "com.apple.widgetkit-extension"],
+            "CFBundlePackageType": "APPL",
+        ])
+        XCTAssertThrowsError(try IPAService.inspect(app))
+    }
+
+    func testRejectsEncryptedExtensionExecutables() throws {
         let app = try makeApp()
         let ext = try makeExtension(in: app, name: "Share", identifier: "com.example.test.Share")
-        try writePlist(at: ext, changes: ["NSExtension": ["NSExtensionPointIdentifier": "com.apple.widgetkit-extension"]])
-        XCTAssertThrowsError(try IPAService.inspect(app))
-        try writePlist(at: ext, changes: ["NSExtension": ["NSExtensionPointIdentifier": "com.apple.share-services"]])
         try executable(encrypted: true).write(to: ext.appendingPathComponent("Test"))
         XCTAssertThrowsError(try IPAService.inspect(app)) { error in
             XCTAssertTrue(error.localizedDescription.contains("FairPlay"))
@@ -61,14 +110,71 @@ final class IPAShareExtensionTests: XCTestCase {
         XCTAssertThrowsError(try info.signingTargets(mainBundleID: SigningService.bundleID(original: info.bundleID, team: "TESTTEAM01")))
     }
 
-    func testRejectsMismatchedVersionsAndNestedBundles() throws {
+    func testMismatchedVersionsAreAcceptedAndNormalizedOnlyInSigningCopy() throws {
+        let app = try makeApp()
+        let build = try makeExtension(in: app, name: "Build", identifier: "com.example.test.Build")
+        let release = try makeExtension(in: app, name: "Release", identifier: "com.example.test.Release")
+        let missing = try makeExtension(in: app, name: "Missing", identifier: "com.example.test.Missing")
+        try writePlist(at: build, changes: ["CFBundleVersion": "2"])
+        try writePlist(at: release, changes: ["CFBundleShortVersionString": "2.0"])
+        try writePlist(at: missing, changes: [:], removingKeys: ["CFBundleShortVersionString"])
+        let sourceURLs = [app, build, release, missing].map { $0.appendingPathComponent("Info.plist") }
+        let sourceData = try sourceURLs.map { try Data(contentsOf: $0) }
+        let imported = try IPAService.inspect(app)
+        XCTAssertEqual(imported.version, "1.0")
+        XCTAssertEqual(imported.buildVersion, "1")
+        XCTAssertEqual(try sourceURLs.map { try Data(contentsOf: $0) }, sourceData)
+
+        let workingApp = root.appendingPathComponent("Signing.app")
+        try FileManager.default.copyItem(at: app, to: workingApp)
+        let info = try IPAService.inspect(workingApp)
+        let mainID = SigningService.bundleID(original: info.bundleID, team: "TESTTEAM01")
+        let targets = try info.signingTargets(mainBundleID: mainID)
+        let mainData = try Data(contentsOf: workingApp.appendingPathComponent("Info.plist"))
+        try IPAService.normalizeExtensionVersions(info)
+        XCTAssertEqual(try Data(contentsOf: workingApp.appendingPathComponent("Info.plist")), mainData)
+        try IPAService.rewriteBundleIDs(targets)
+        for target in targets {
+            let plist = try readPlist(target.component.url)
+            XCTAssertEqual(plist["CFBundleVersion"] as? String, "1")
+            XCTAssertEqual(plist["CFBundleShortVersionString"] as? String, "1.0")
+            XCTAssertEqual(plist["CFBundleIdentifier"] as? String, target.bundleID)
+            if target.component.bundleID != info.bundleID {
+                let source = app.appendingPathComponent("PlugIns/" + target.component.url.lastPathComponent)
+                XCTAssertEqual(plist["NSExtension"] as? NSDictionary, try readPlist(source)["NSExtension"] as? NSDictionary)
+                XCTAssertEqual(
+                    try Data(contentsOf: target.component.url.appendingPathComponent("Test")),
+                    try Data(contentsOf: source.appendingPathComponent("Test")))
+            }
+        }
+        XCTAssertEqual(try sourceURLs.map { try Data(contentsOf: $0) }, sourceData)
+    }
+
+    func testNormalizationRemovesExtensionShortVersionWhenMainHasNone() throws {
         let app = try makeApp()
         let ext = try makeExtension(in: app, name: "Share", identifier: "com.example.test.Share")
-        try writePlist(at: ext, changes: ["CFBundleVersion": "2"])
+        try writePlist(at: app, changes: [:], removingKeys: ["CFBundleShortVersionString"])
+        let info = try IPAService.inspect(app)
+        try IPAService.normalizeExtensionVersions(info)
+        XCTAssertNil(try readPlist(ext)["CFBundleShortVersionString"])
+        XCTAssertEqual(try readPlist(ext)["CFBundleVersion"] as? String, "1")
+    }
+
+    func testRejectsMissingOrInvalidExtensionBuildVersion() throws {
+        let app = try makeApp()
+        let ext = try makeExtension(in: app, name: "Share", identifier: "com.example.test.Share")
+        try writePlist(at: ext, changes: [:], removingKeys: ["CFBundleVersion"])
         XCTAssertThrowsError(try IPAService.inspect(app))
-        try writePlist(at: ext, changes: ["CFBundleVersion": "1", "CFBundleShortVersionString": "2.0"])
-        XCTAssertThrowsError(try IPAService.inspect(app))
-        try writePlist(at: ext, changes: ["CFBundleShortVersionString": "1.0"])
+        let invalidBuildVersions: [Any] = ["", 42]
+        for value in invalidBuildVersions {
+            try writePlist(at: ext, changes: ["CFBundleVersion": value])
+            XCTAssertThrowsError(try IPAService.inspect(app))
+        }
+    }
+
+    func testRejectsNestedBundles() throws {
+        let app = try makeApp()
+        let ext = try makeExtension(in: app, name: "Share", identifier: "com.example.test.Share")
         for directory in ["Watch", "AppClips", "PlugIns"] {
             let nested = ext.appendingPathComponent(directory + "/Nested.app")
             try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
@@ -79,7 +185,9 @@ final class IPAShareExtensionTests: XCTestCase {
 
     func testReadsAppGroupsForEachComponentAndAcceptsUnsignedBuilds() throws {
         let app = try makeApp()
-        let ext = try makeExtension(in: app, name: "Share", identifier: "com.example.test.Share")
+        let ext = try makeExtension(
+            in: app, name: "Widget", identifier: "com.example.test.Widget",
+            extensionPoint: "com.apple.widgetkit-extension")
         XCTAssertTrue(try IPAService.inspect(app).components.allSatisfy { $0.appGroups.isEmpty })
         let entitlements = try PropertyListSerialization.data(
             fromPropertyList: ["com.apple.security.application-groups": ["group.com.example.shared"]],
@@ -116,14 +224,17 @@ final class IPAShareExtensionTests: XCTestCase {
     }
 
     @discardableResult
-    private func makeExtension(in app: URL, name: String, identifier: String) throws -> URL {
+    private func makeExtension(
+        in app: URL, name: String, identifier: String,
+        extensionPoint: String = "com.apple.share-services"
+    ) throws -> URL {
         let ext = app.appendingPathComponent("PlugIns/\(name).appex")
         try makeBundle(at: ext, identifier: identifier, packageType: "XPC!")
         try writePlist(
             at: ext,
             changes: [
                 "NSExtension": [
-                    "NSExtensionPointIdentifier": "com.apple.share-services",
+                    "NSExtensionPointIdentifier": extensionPoint,
                     "NSExtensionPrincipalClass": "Share.ViewController",
                 ]
             ])
@@ -147,9 +258,10 @@ final class IPAShareExtensionTests: XCTestCase {
         return try XCTUnwrap(PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any])
     }
 
-    private func writePlist(at bundle: URL, changes: [String: Any]) throws {
+    private func writePlist(at bundle: URL, changes: [String: Any], removingKeys: [String] = []) throws {
         var plist = try readPlist(bundle)
         plist.merge(changes) { _, new in new }
+        for key in removingKeys { plist.removeValue(forKey: key) }
         try PropertyListSerialization.data(fromPropertyList: plist, format: .binary, options: 0)
             .write(to: bundle.appendingPathComponent("Info.plist"))
     }

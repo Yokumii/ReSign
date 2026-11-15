@@ -83,7 +83,7 @@ enum IPAService {
                 .sorted { $0.lastPathComponent < $1.lastPathComponent }
             for ext in extensions {
                 guard ext.pathExtension == "appex", try ext.resourceValues(forKeys: [.isDirectoryKey]).isDirectory == true else {
-                    throw ReSignError("PlugIns 中仅支持分享扩展：\(ext.lastPathComponent)。")
+                    throw ReSignError("PlugIns 中仅支持 App Extension（.appex）：\(ext.lastPathComponent)。")
                 }
                 try rejectEmbeddedApps(in: ext)
                 let nestedPlugins = ext.appendingPathComponent("PlugIns")
@@ -93,20 +93,19 @@ enum IPAService {
                 let extPlist = try readPlist(ext)
                 let configuration = extPlist["NSExtension"] as? [String: Any]
                 guard extPlist["CFBundlePackageType"] as? String == "XPC!",
-                    configuration?["NSExtensionPointIdentifier"] as? String == "com.apple.share-services"
+                    let extensionPoint = configuration?["NSExtensionPointIdentifier"] as? String,
+                    extensionPoint.contains("."), validBundleID(extensionPoint)
                 else {
-                    throw ReSignError("仅支持分享扩展，不支持此 App Extension：\(ext.lastPathComponent)。")
+                    throw ReSignError("App Extension 配置无效，需声明 XPC! 包类型和有效的 NSExtensionPointIdentifier：\(ext.lastPathComponent)。")
+                }
+                guard extensionPoint != "com.apple.watchkit" else {
+                    throw ReSignError("不支持 Watch 应用或 WatchKit 扩展。")
                 }
                 let component = try inspectComponent(ext, plist: extPlist)
                 guard component.bundleID.hasPrefix(main.bundleID + "."),
                     identifiers.insert(component.bundleID.lowercased()).inserted
                 else {
-                    throw ReSignError("分享扩展的 Bundle ID 必须以主应用 ID 加点号开头，且不能重复：\(component.bundleID)。")
-                }
-                guard (extPlist["CFBundleVersion"] as? String) == build,
-                    (extPlist["CFBundleShortVersionString"] as? String) == (plist["CFBundleShortVersionString"] as? String)
-                else {
-                    throw ReSignError("分享扩展与主应用的版本号不一致：\(component.bundleID)。")
+                    throw ReSignError("App Extension 的 Bundle ID 必须以主应用 ID 加点号开头，且不能重复：\(component.bundleID)。")
                 }
                 components.append(component)
             }
@@ -160,14 +159,38 @@ enum IPAService {
             }
     }
 
-    static func rewriteBundleID(at app: URL, to identifier: String) throws {
+    static func normalizeExtensionVersions(_ info: IPAInfo) throws {
+        guard let main = info.components.first, main.bundleID == info.bundleID else {
+            throw ReSignError("无法确定用于同步扩展版本的主应用。")
+        }
+        let mainPlist = try readPlist(main.url)
+        for component in info.components.dropFirst() {
+            var plist = try readPlist(component.url)
+            plist["CFBundleVersion"] = mainPlist["CFBundleVersion"]
+            plist["CFBundleShortVersionString"] = mainPlist["CFBundleShortVersionString"]
+            let data = try PropertyListSerialization.data(fromPropertyList: plist, format: .binary, options: 0)
+            try data.write(to: component.url.appendingPathComponent("Info.plist"), options: .atomic)
+        }
+    }
+
+    static func rewriteBundleIDs(_ targets: [IPASigningTarget]) throws {
+        let identifiers = Dictionary(uniqueKeysWithValues: targets.map { ($0.component.bundleID, $0.bundleID) })
+        for target in targets {
+            try rewriteBundleID(at: target.component.url, to: target.bundleID, identifiers: identifiers)
+        }
+    }
+
+    static func rewriteBundleID(at app: URL, to identifier: String, identifiers: [String: String] = [:]) throws {
         var plist = try readPlist(app)
         plist["CFBundleIdentifier"] = identifier
+        if let widget = plist["UIApplicationShortcutWidget"] as? String, let rewritten = identifiers[widget] {
+            plist["UIApplicationShortcutWidget"] = rewritten
+        }
         let data = try PropertyListSerialization.data(fromPropertyList: plist, format: .binary, options: 0)
         try data.write(to: app.appendingPathComponent("Info.plist"), options: .atomic)
     }
 
-    private static func readPlist(_ app: URL) throws -> [String: Any] {
+    static func readPlist(_ app: URL) throws -> [String: Any] {
         let data = try Data(contentsOf: app.appendingPathComponent("Info.plist"))
         guard let plist = try PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] else {
             throw ReSignError("无法读取应用 Info.plist。")

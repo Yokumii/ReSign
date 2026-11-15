@@ -15,6 +15,8 @@
 6. `Sources/DeveloperPortal/Authentication.swift`：请求的 User-Agent 跟随传入的 Anisette 身份；未知 Apple 错误携带握手／密码／签名令牌阶段。注册、密码登录和令牌申请使用同一提供方身份，不做 Windows → Mac 声明切换或自动重试。
 7. `Sources/Models/AppBundle.swift`、`Sources/CodeSigning/CodeSignerAPI.swift`：统一读取 Mach-O 中的签名权限；签名时校验 App Groups 是否已获描述文件授权，仅写入应用请求的共享组。
 8. `Sources/CodeSigning/CodeSignerAPI.swift`：扩展权限仅匹配对应扩展目录或可执行文件路径；优先识别内嵌 framework 与 dylib，避免依赖库继承扩展权限。
+9. `Sources/CodeSigning/CodeSignerAPI.swift`：扩展请求的额外权限若未出现在描述文件中，明确报错并提示配置对应 App ID 的能力，避免重签时静默丢弃扩展权限。
+10. `Sources/CodeSigning/CodeSignerAPI.swift`：接受显式 App Group 映射，按映射后的组名校验描述文件和写入签名权限，同步处理以原 App Group 命名的钥匙串访问组；未传映射时保留原有库行为。
 
 未修改 SRP、令牌解密算法或代码签名格式实现。认证请求行为由 `Tests/ReSignTests/AuthenticationRequestTests.swift` 覆盖；真实账号与真机验证状态见 [docs/TESTING.md](../../docs/TESTING.md)。
 

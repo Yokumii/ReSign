@@ -99,6 +99,17 @@ actor SigningService {
             }
             let targets = try info.signingTargets(mainBundleID: app.bundleID)
             await stage(.authentication)
+            let originalGroups = targets.flatMap { $0.component.appGroups }
+            let existingGroups: [AppGroup]
+            if originalGroups.isEmpty {
+                existingGroups = []
+            } else {
+                let groupSession = try await self.session(account: account, settings: settings)
+                existingGroups = try await portal.fetchAppGroups(for: account.team, session: groupSession)
+            }
+            let groupIdentifiers = AppGroupCompatibility.identifiers(
+                for: originalGroups, teamID: account.team.identifier, existing: existingGroups.map(\.identifier))
+            try AppGroupCompatibility.prepare(info, identifiers: groupIdentifiers)
             let certificate = try await signingCertificate(account: account, settings: settings)
             var session = try await session(account: account, settings: settings)
             let type: DeviceType = device.productType?.hasPrefix("iPad") == true ? .iPad : .iPhone
@@ -112,7 +123,8 @@ actor SigningService {
             await stage(.provisioning)
             session = try await self.session(account: account, settings: settings)
             var appIDs = try await portal.fetchAppIDs(for: account.team, session: session)
-            let groups = try await appGroups(for: targets, account: account, settings: settings)
+            let groups = try await appGroups(
+                identifiers: groupIdentifiers, existing: existingGroups, account: account, settings: settings)
             var profiles: [ProvisioningProfile] = []
             var expiry = certificate.expiryDate
             for target in targets {
@@ -130,17 +142,17 @@ actor SigningService {
                 guard appID.bundleIdentifier == target.bundleID else {
                     throw ReSignError("Apple 返回的 App ID 与签名目标不匹配：\(target.component.bundleID)。")
                 }
-                if !target.component.appGroups.isEmpty {
+                let assignedGroups = try target.component.appGroups.map { identifier in
+                    guard let group = groups[identifier], !group.groupID.isEmpty else {
+                        throw ReSignError("缺少 App Group：\(identifier)。")
+                    }
+                    return group
+                }
+                if !assignedGroups.isEmpty {
                     if appID.features[.appGroups] != "true" {
                         appID.features[.appGroups] = "true"
                         session = try await self.session(account: account, settings: settings)
                         appID = try await portal.updateAppID(appID, team: account.team, session: session)
-                    }
-                    let assignedGroups = try target.component.appGroups.map { identifier in
-                        guard let group = groups[identifier], !group.groupID.isEmpty else {
-                            throw ReSignError("缺少 App Group：\(identifier)。")
-                        }
-                        return group
                     }
                     session = try await self.session(account: account, settings: settings)
                     appID = try await portal.assignAppGroups(assignedGroups, to: appID, team: account.team, session: session)
@@ -148,15 +160,16 @@ actor SigningService {
                 let profile = try await provisioningProfile(
                     for: target, appID: appID, app: app,
                     device: device, certificate: certificate,
+                    requiredAppGroups: assignedGroups.map(\.identifier),
                     account: account, settings: settings)
                 profiles.append(profile)
                 expiry = min(expiry, profile.expirationDate)
             }
             await stage(.signing)
-            for target in targets {
-                try IPAService.rewriteBundleID(at: target.component.url, to: target.bundleID)
-            }
-            let signer = AppBundleSigner(team: account.team, keyStore: certificate)
+            try IPAService.normalizeExtensionVersions(info)
+            try IPAService.rewriteBundleIDs(targets)
+            let signer = AppBundleSigner(
+                team: account.team, keyStore: certificate, appGroupIdentifiers: groupIdentifiers)
             try await signer.signApp(at: appURL, provisioningProfiles: profiles)
             let ipa = try FileManager.default.zipAppBundle(at: appURL, compressionLevel: .fastest)
             return SignedArtifact(ipa: ipa, workspace: workspace, expiresAt: expiry)
@@ -167,20 +180,20 @@ actor SigningService {
     }
 
     private func appGroups(
-        for targets: [IPASigningTarget], account: SavedAccount,
+        identifiers: [String: String], existing: [AppGroup], account: SavedAccount,
         settings: AppSettings
     ) async throws -> [String: AppGroup] {
-        let identifiers = Set(targets.flatMap { $0.component.appGroups }).sorted()
         guard !identifiers.isEmpty else { return [:] }
-        let session = try await session(account: account, settings: settings)
-        let existing = try await portal.fetchAppGroups(for: account.team, session: session)
+        var registered = existing
         var groups: [String: AppGroup] = [:]
-        for identifier in identifiers {
-            if let group = existing.first(where: { $0.identifier == identifier }) {
-                groups[identifier] = group
+        for original in identifiers.keys.sorted() {
+            guard let identifier = identifiers[original] else {
+                throw ReSignError("缺少 App Group 映射：\(original)。")
+            }
+            if let group = registered.first(where: { $0.identifier == identifier }) {
+                groups[original] = group
                 continue
             }
-            // Preserve identifiers because apps may hard-code their shared container names.
             do {
                 let session = try await self.session(account: account, settings: settings)
                 let name = "ReSign " + String(AnisetteService.digest(Data(identifier.utf8)).prefix(16))
@@ -190,11 +203,12 @@ actor SigningService {
                 guard group.identifier == identifier, !group.groupID.isEmpty else {
                     throw ReSignError("Apple 返回的 App Group 与请求不匹配。")
                 }
-                groups[identifier] = group
+                groups[original] = group
+                registered.append(group)
             } catch {
                 let classified = Self.classify(error)
                 if classified is AuthenticationNeeded { throw classified }
-                throw ReSignError("当前团队无法注册 App Group「\(identifier)」。需要可使用此组名的团队，或重新构建使用当前团队共享组的应用。\n\(classified.localizedDescription)")
+                throw ReSignError("当前团队无法注册 App Group「\(identifier)」（原共享组：\(original)）。请确认团队可使用 App Groups 能力后重试。\n\(classified.localizedDescription)")
             }
         }
         return groups
@@ -203,6 +217,7 @@ actor SigningService {
     private func provisioningProfile(
         for target: IPASigningTarget, appID: AppID, app: ManagedApp,
         device: ConnectedDevice, certificate: KeyStore,
+        requiredAppGroups: [String],
         account: SavedAccount, settings: AppSettings
     ) async throws -> ProvisioningProfile {
         guard appID.bundleIdentifier == target.bundleID else {
@@ -216,7 +231,7 @@ actor SigningService {
         }
         func groupsMatch(_ profile: ProvisioningProfile) -> Bool {
             let authorized = profile.entitlements["com.apple.security.application-groups"] as? [String] ?? []
-            return Set(target.component.appGroups).isSubset(of: Set(authorized))
+            return Set(requiredAppGroups).isSubset(of: Set(authorized))
         }
         let needsNewProfile =
             profile.expirationDate <= Date().addingTimeInterval(48 * 3600)
