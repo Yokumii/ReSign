@@ -24,8 +24,8 @@
 推送版本标签会触发 `.github/workflows/release.yml`：
 
 ```sh
-git tag -a v1.1.2 -m "ReSign 1.1.2"
-git push origin v1.1.2
+git tag -a v1.1.3 -m "ReSign 1.1.3"
+git push origin v1.1.3
 ```
 
 流程分为两个作业：
@@ -40,7 +40,7 @@ git push origin v1.1.2
 发布说明由以下内容组成：
 
 1. `docs/RELEASE_TEMPLATE.md`：通用下载、系统要求、签名和许可证说明。
-2. `docs/releases/<版本>.md`：可选的版本补充。`1.1.2` 使用该文件记录功能、验证范围和限制。
+2. `docs/releases/<版本>.md`：可选的版本补充。`1.1.3` 使用该文件记录认证修复和更新说明。
 3. `scripts/generate-release-notes.py`：从上一个版本标签到当前标签的非合并提交生成分类摘要。
 
 提交信息使用 Conventional Commits：
@@ -90,7 +90,7 @@ python3 scripts/package-dmg.py dist/ReSign.dmg
 在干净且已打标签的提交上，可以使用与工作流相同的打包脚本：
 
 ```sh
-RELEASE_TAG=v1.1.2 python3 scripts/package-release.py
+RELEASE_TAG=v1.1.3 python3 scripts/package-release.py
 ```
 
 应用签名、依赖许可证收集、DMG 打包和发布附件生成逻辑分别位于 `scripts/build-app.sh`、`scripts/collect-notices.py`、`scripts/package-dmg.py` 和 `scripts/package-release.py`。

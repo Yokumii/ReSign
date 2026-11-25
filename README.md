@@ -143,7 +143,7 @@ swift test --filter ReSignTests
 
 ## 版本与发布
 
-当前版本为 1.1.2，版本号以 `Resources/Info.plist` 为唯一来源。版本说明见 [docs/releases/1.1.2.md](docs/releases/1.1.2.md)。推送 `v主版本.次版本.修订版本` 标签后，GitHub Actions 会运行测试、构建 arm64 应用、打包源码和依赖，并创建 Draft Release。签名、运行器和附件说明见 [docs/RELEASING.md](docs/RELEASING.md)。
+当前版本为 1.1.3，版本号以 `Resources/Info.plist` 为唯一来源。版本说明见 [docs/releases/1.1.3.md](docs/releases/1.1.3.md)。推送 `v主版本.次版本.修订版本` 标签后，GitHub Actions 会运行测试、构建 arm64 应用、打包源码和依赖，并创建 Draft Release。签名、运行器和附件说明见 [docs/RELEASING.md](docs/RELEASING.md)。
 
 ## 许可证
 
