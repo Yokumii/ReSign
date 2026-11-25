@@ -30,7 +30,9 @@ actor AnisetteService {
             guard let json else {
                 throw ReSignError(error.map { String(cString: $0) } ?? "无法读取本机认证数据。")
             }
-            return try JSONDecoder().decode(AnisetteData.self, from: Data(String(cString: json).utf8))
+            var data = try JSONDecoder().decode(AnisetteData.self, from: Data(String(cString: json).utf8))
+            data.clientInfo = Self.compatibleClientInfo(data.clientInfo)
+            return data
         }
 
         let server = try settings.validatedServerURL()
@@ -47,7 +49,8 @@ actor AnisetteService {
               !info.user_agent.contains(where: { $0.isNewline }) else {
             throw ReSignError("Anisette v3 服务的客户端身份无效。")
         }
-        let key = Self.identityKey(server: server, clientInfo: info.client_info, userAgent: info.user_agent)
+        let clientInfo = Self.compatibleClientInfo(info.client_info)
+        let key = Self.identityKey(server: server, clientInfo: clientInfo, userAgent: info.user_agent)
         var identity: RemoteIdentity
         if let saved = try vault.read(RemoteIdentity.self, key: key) {
             identity = saved
@@ -56,7 +59,7 @@ actor AnisetteService {
             try vault.write(identity, key: key)
         }
         let client = RemoteAnisetteClient(server: server, identifier: identity.identifier,
-                                          clientInfo: info.client_info, userAgent: info.user_agent)
+                                          clientInfo: clientInfo, userAgent: info.user_agent)
         if identity.adiBlob == nil {
             let provisioned = try await client.provision()
             identity.adiBlob = provisioned.blob
@@ -67,6 +70,11 @@ actor AnisetteService {
             throw ReSignError("Anisette 注册信息不完整，请重新登录。")
         }
         return try await client.headers(blob: blob, routing: routing)
+    }
+
+    static func compatibleClientInfo(_ value: String) -> String {
+        // GSA requires the Mac OS X label during provisioning and authentication.
+        value.replacingOccurrences(of: "<macOS;", with: "<Mac OS X;")
     }
 
     static func identityKey(server: URL, clientInfo: String, userAgent: String) -> String {
@@ -80,7 +88,7 @@ actor AnisetteService {
 
 extension AppSettings {
     var authenticationContext: String {
-        "gsa-client-v5:\(anisetteSource.rawValue):\(anisetteServer.trimmingCharacters(in: .whitespacesAndNewlines)):\(xcodeVersion)"
+        "gsa-client-v6:\(anisetteSource.rawValue):\(anisetteServer.trimmingCharacters(in: .whitespacesAndNewlines)):\(xcodeVersion)"
     }
 
     func validatedServerURL() throws -> URL {

@@ -193,7 +193,7 @@ final class ReSignTests: XCTestCase {
         let (metadata, _) = try await URLSession.shared.data(from: server.appendingPathComponent("v3/client_info"))
         let advertised = try XCTUnwrap(JSONSerialization.jsonObject(with: metadata) as? [String: String])
         let key = AnisetteService.identityKey(
-            server: server, clientInfo: try XCTUnwrap(advertised["client_info"]),
+            server: server, clientInfo: AnisetteService.compatibleClientInfo(try XCTUnwrap(advertised["client_info"])),
             userAgent: try XCTUnwrap(advertised["user_agent"]))
         defer { try? vault.remove(key) }
         let firstService = AnisetteService(vault: vault)
@@ -201,7 +201,7 @@ final class ReSignTests: XCTestCase {
         XCTAssertFalse(first.oneTimePassword.isEmpty)
         XCTAssertFalse(first.machineID.isEmpty)
         XCTAssertNotNil(Data(base64Encoded: first.oneTimePassword))
-        XCTAssertEqual(first.clientInfo, advertised["client_info"])
+        XCTAssertEqual(first.clientInfo, AnisetteService.compatibleClientInfo(try XCTUnwrap(advertised["client_info"])))
         XCTAssertEqual(first.userAgent, advertised["user_agent"])
         // A new service instance represents the next app launch and must reuse the saved identity.
         let restartedService = AnisetteService(vault: vault)
@@ -227,7 +227,7 @@ final class ReSignTests: XCTestCase {
         let (metadata, _) = try await URLSession.shared.data(from: server.appendingPathComponent("v3/client_info"))
         let advertised = try XCTUnwrap(JSONSerialization.jsonObject(with: metadata) as? [String: String])
         let key = AnisetteService.identityKey(
-            server: server, clientInfo: try XCTUnwrap(advertised["client_info"]),
+            server: server, clientInfo: AnisetteService.compatibleClientInfo(try XCTUnwrap(advertised["client_info"])),
             userAgent: try XCTUnwrap(advertised["user_agent"]))
         defer { try? vault.remove(key) }
         let service = SigningService(vault: vault)

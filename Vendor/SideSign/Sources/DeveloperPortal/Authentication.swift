@@ -303,6 +303,13 @@ public extension DeveloperPortal {
     }
 
     func sendAuthenticationRequest(parameters requestParameters: [String: any Sendable], anisetteData: AnisetteData) async throws -> [String: any Sendable] {
+        let stage: String
+        switch requestParameters["o"] as? String {
+        case "init": stage = "账号握手"
+        case "complete": stage = "密码验证"
+        case "apptokens": stage = "签名令牌申请"
+        default: stage = "Apple 认证"
+        }
         let requestURL = Constants.URLs.grandSlamAuth
         let h = customHeaders
 
@@ -338,18 +345,21 @@ public extension DeveloperPortal {
             throw error
         }
 
-        let httpResponse = response as? HTTPURLResponse
-        let statusCode = httpResponse?.statusCode ?? 0
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw ServerError.badServerResponse(reason: "\(stage)失败：未收到 HTTP 响应", jsonPayload: "")
+        }
+        let statusCode = httpResponse.statusCode
 
         guard !data.isEmpty else {
             debugLog("[SideSign] Auth endpoint returned 0 bytes (HTTP \(statusCode))")
-            throw ServerError.badServerResponse(reason: "Auth endpoint returned empty response (0 bytes)", jsonPayload: "0 bytes")
+            throw ServerError.badServerResponse(reason: "\(stage)失败：HTTP \(statusCode)，响应为空", jsonPayload: "")
         }
 
         guard let responseDictionary = parsePlistOrJSON(data) else {
-            let rawStr = String(data: data, encoding: .utf8) ?? data.hexEncodedString()
-            debugLog("[SideSign] Auth endpoint returned invalid response format: \(rawStr)")
-            throw ServerError.invalidResponseFormat(rawPayload: rawStr)
+            let format = httpResponse.mimeType ?? "未知类型"
+            throw ServerError.badServerResponse(
+                reason: "\(stage)失败：HTTP \(statusCode)，响应类型 \(format)，无法解析为 plist/JSON",
+                jsonPayload: "")
         }
 
         let dictionary = (responseDictionary["Response"] as? [String: any Sendable]) ?? responseDictionary
@@ -373,17 +383,13 @@ public extension DeveloperPortal {
             case GrandSlamAuthErrorCodes.incorrectVerificationCode:
                 throw DeveloperPortalError.incorrectVerificationCode(cause: errorDesc)
             default:
-                let stage: String
-                switch requestParameters["o"] as? String {
-                case "init": stage = "账号握手"
-                case "complete": stage = "密码验证"
-                case "apptokens": stage = "签名令牌申请"
-                default: stage = "Apple 认证"
-                }
                 throw ServerError.underlyingError(code: errorCode, message: "\(stage)失败：\(errorDesc ?? "Authentication failed")")
             }
         }
 
+        guard (200..<300).contains(statusCode) else {
+            throw ServerError.badServerResponse(reason: "\(stage)失败：HTTP \(statusCode)", jsonPayload: "")
+        }
         return dictionary
     }
 

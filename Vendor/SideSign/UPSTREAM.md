@@ -17,6 +17,7 @@
 8. `Sources/CodeSigning/CodeSignerAPI.swift`：扩展权限仅匹配对应扩展目录或可执行文件路径；优先识别内嵌 framework 与 dylib，避免依赖库继承扩展权限。
 9. `Sources/CodeSigning/CodeSignerAPI.swift`：扩展请求的额外权限若未出现在描述文件中，明确报错并提示配置对应 App ID 的能力，避免重签时静默丢弃扩展权限。
 10. `Sources/CodeSigning/CodeSignerAPI.swift`：接受显式 App Group 映射，按映射后的组名校验描述文件和写入签名权限，同步处理以原 App Group 命名的钥匙串访问组；未传映射时保留原有库行为。
+11. `Sources/DeveloperPortal/Authentication.swift`：认证响应错误包含阶段、HTTP 状态及内容类型；非 2xx 响应按失败处理，Apple 结构化错误保留原有分类。
 
 未修改 SRP、令牌解密算法或代码签名格式实现。认证请求行为由 `Tests/ReSignTests/AuthenticationRequestTests.swift` 覆盖；真实账号与真机验证状态见 [docs/TESTING.md](../../docs/TESTING.md)。
 
