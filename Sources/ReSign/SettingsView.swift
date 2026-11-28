@@ -7,6 +7,8 @@ struct SettingsView: View {
     @State private var settings: AppSettings
     @State private var launchAtLogin: Bool
     @State private var serviceMessage: String?
+    @State private var githubToken = ""
+    @State private var tokenMessage: String?
 
     init(model: AppModel) {
         self.model = model
@@ -42,6 +44,31 @@ struct SettingsView: View {
                         TextField("Xcode 客户端版本", text: $settings.xcodeVersion)
                     }
                 }
+                Section("GitHub 软件更新") {
+                    SecureField("GitHub Token", text: $githubToken,
+                                prompt: Text(model.hasGitHubToken ? "已保存，填写新 Token 可替换" : "填写 Personal Access Token"))
+                    HStack {
+                        Button("保存 Token") {
+                            do {
+                                try model.saveGitHubToken(githubToken)
+                                githubToken = ""
+                                tokenMessage = "Token 已保存。"
+                            } catch { tokenMessage = error.localizedDescription }
+                        }.disabled(githubToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        if model.hasGitHubToken {
+                            Button("清除 Token") {
+                                do {
+                                    try model.saveGitHubToken("")
+                                    githubToken = ""
+                                    tokenMessage = "Token 已清除。"
+                                } catch { tokenMessage = error.localizedDescription }
+                            }
+                        }
+                    }.disabled(model.isBusy || model.isLoggingIn)
+                    Text("Token 独立保存到 macOS 钥匙串，用于提高 GitHub API 请求配额。")
+                        .font(.caption).foregroundStyle(.secondary)
+                    if let tokenMessage { Text(tokenMessage).font(.caption).foregroundStyle(.secondary) }
+                }
             }.formStyle(.grouped)
             HStack {
                 Button("打开数据目录") { model.revealData() }
@@ -50,7 +77,7 @@ struct SettingsView: View {
                 Button("保存") { if model.saveSettings(settings) { dismiss() } }
                     .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
             }
-        }.padding(24).frame(width: 570, height: 570)
+        }.padding(24).frame(width: 570, height: 700)
     }
 
     private func updateLoginItem(_ enabled: Bool) {

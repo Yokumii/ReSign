@@ -30,7 +30,7 @@ private struct MenuContent: View {
     @ObservedObject var model: AppModel
     @Environment(\.openWindow) private var openWindow
     var body: some View {
-        Text(model.isBusy ? "正在续签…" : "托管 \(model.library.apps.count) 个应用")
+        Text(model.isBusy ? "正在处理…" : "托管 \(model.library.apps.count) 个应用")
         Button("打开 ReSign") {
             openWindow(id: "main")
             NSApp.activate(ignoringOtherApps: true)

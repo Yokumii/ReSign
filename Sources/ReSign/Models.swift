@@ -34,6 +34,7 @@ struct RememberedDevice: Codable, Identifiable, Sendable {
     var name: String
     var lastSeen: Date
     var networkAddress: String?
+    var osVersion: String?
 }
 
 struct ManagedApp: Codable, Identifiable {
@@ -53,13 +54,32 @@ struct ManagedApp: Codable, Identifiable {
     var lastError: String?
     var failedAttempts = 0
     var nextAttemptAt: Date?
+    var updateSource: AppUpdateSource?
+    var updateCandidates: [AppUpdateSource]?
+    var automaticUpdates: Bool?
+    var lastUpdateCheck: Date?
+    var lastUpdateError: String?
+    var lastResolvedRelease: String?
+    var previousIPAFilename: String?
 
     func isDue(at date: Date, leadHours: Int) -> Bool {
-        guard autoRefresh, failedAttempts < 5 else { return false }
+        guard failedAttempts < 5 else { return false }
         if let nextAttemptAt, nextAttemptAt > date { return false }
-        if pendingInstall { return true }
+        if pendingInstall { return autoRefresh || previousIPAFilename != nil }
+        guard autoRefresh else { return false }
         guard let expiresAt else { return true }
         return expiresAt.timeIntervalSince(date) <= Double(leadHours) * 3600
+    }
+}
+
+struct AppUpdateSource: Codable, Equatable, Hashable, Sendable {
+    enum Kind: String, Codable, Sendable { case github, altStore }
+    var kind: Kind
+    var url: String
+    var assetPattern: String?
+
+    var title: String {
+        kind == .github ? "GitHub · \(URL(string: url)?.path.dropFirst() ?? Substring(url))" : url
     }
 }
 

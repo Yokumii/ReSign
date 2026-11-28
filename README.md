@@ -7,6 +7,7 @@ ReSign 是使用 SwiftUI 编写的 macOS iOS 应用签名与自动续签工具�
 - 单 Apple 账号与开发团队，支持 GSA 登录和设备／短信双重认证。
 - 通过 USB 或局域网连接已配对设备；自动发现不可用时可直接填写 IP，双通道在线时优先使用 USB。
 - 导入普通 IPA 或带 App Extension 的 IPA，保存独立的安装源和稳定的签名 Bundle ID。
+- 自动识别或手动绑定 GitHub Releases 与 AltStore JSON 软件源，定时检查、下载新版 IPA 并重签覆盖安装。
 - 从 IPA 提取并缓存主应用图标，缺失或无法解码时使用占位图。
 - 申请开发证书、注册设备，为主应用和各 App Extension 分别注册 App ID、获取及更新描述文件。
 - 使用 SideSign／CodeSignKit 重签，并通过 AFC／Installation Proxy 安装或覆盖更新。
@@ -59,6 +60,19 @@ python3 scripts/package-dmg.py dist/ReSign.dmg
 3. 在设备列表中选择设备，导入可重签的普通 IPA 或带 App Extension 的 IPA。
 4. 首次运行安装后的应用时，按 iOS 提示完成信任和开发者模式设置。
 5. 保持 ReSign 在菜单栏运行；设备在线且应用临近到期时会自动处理。
+
+### 软件版本自动更新
+
+导入 IPA 时，ReSign 会扫描包内配置与二进制文件以识别更新来源：找到唯一明确来源时自动绑定，否则打开“软件更新来源”窗口供选择候选或手动填写。之后可随时在应用卡片的“更新来源…”中修改或清除绑定。
+
+支持以下 HTTPS 更新来源：
+
+- **GitHub Releases**：填写仓库地址（如 `https://github.com/owner/repo`），检查最新正式 Release 中的 IPA 附件。包含多个 IPA 时可设置通配符匹配规则（如 `*_ios_*.ipa`，`*` 匹配任意字符）。如遇 API 限额，可在“设置 → GitHub 软件更新”中配置 Personal Access Token（保存于钥匙串）。
+- **AltStore JSON 软件源**：填写软件源 JSON 地址，按原始 Bundle ID 查找应用，并按源内顺序选择兼容当前设备系统版本的条目。
+
+运行期间每小时自动检查一次，也可在应用菜单中手动检查。下载的新版 IPA 会校验文件大小、SHA-256（如提供）、原始 Bundle ID 及版本号，仅在版本或构建号更高时替换本地安装源，并在设备就绪后重签覆盖安装。
+
+自动更新与自动续签相互独立。新版安装成功前保留上一份 IPA，如更新异常可在应用菜单中选择“恢复上一份 IPA 并暂停更新”。
 
 ### App Extension
 

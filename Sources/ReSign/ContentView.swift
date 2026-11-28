@@ -89,6 +89,12 @@ struct ContentView: View {
         .sheet(isPresented: $model.showLogin, onDismiss: { model.cancelLogin() }) { LoginView(model: model) }
         .sheet(item: $networkDevice) { device in NetworkConnectionView(model: model, device: device) }
         .sheet(isPresented: $model.showSettings) { SettingsView(model: model) }
+        .sheet(isPresented: Binding(get: { model.updateSourceAppID != nil },
+                                    set: { if !$0 { model.updateSourceAppID = nil } })) {
+            if let app = model.library.apps.first(where: { $0.id == model.updateSourceAppID }) {
+                UpdateSourceView(model: model, app: app)
+            }
+        }
         .alert("ReSign", isPresented: Binding(get: { model.notice != nil }, set: { if !$0 { model.notice = nil } })) {
             Button("知道了", role: .cancel) { model.notice = nil }
         } message: { Text(model.notice ?? "") }
@@ -105,7 +111,7 @@ struct ContentView: View {
         HStack(alignment: .center) {
             VStack(alignment: .leading, spacing: 7) {
                 Text("应用续签").font(.system(size: 28, weight: .semibold))
-                Text(model.isBusy ? "正在处理，完成后更新有效期。" : model.isScanning ? "正在扫描设备…" : "启动时自动处理临近到期的应用。")
+                Text(model.isBusy ? "正在处理应用任务…" : model.isScanning ? "正在扫描设备…" : "自动检查软件更新，并处理临近到期的应用。")
                     .foregroundStyle(.secondary)
             }
             Spacer()
@@ -191,12 +197,39 @@ private struct AppCard: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
+            VStack(alignment: .leading, spacing: 5) {
+                HStack {
+                    if let source = app.updateSource {
+                        Label(app.automaticUpdates == false ? "自动更新已暂停" : "每小时检查更新", systemImage: "arrow.down.circle")
+                        Text(source.title).lineLimit(1).truncationMode(.middle)
+                    } else {
+                        Label("未绑定更新来源", systemImage: "link")
+                    }
+                    Spacer()
+                    Button(app.updateSource == nil ? "填写更新来源…" : "更新来源…") { model.updateSourceAppID = app.id }
+                        .disabled(model.isBusy || model.isLoggingIn)
+                }
+                if let checked = app.lastUpdateCheck {
+                    Text("上次检查：\(checked.formatted(date: .abbreviated, time: .shortened))")
+                }
+                if app.pendingInstall, app.previousIPAFilename != nil {
+                    Text("新版 IPA 已就绪，等待覆盖安装。")
+                }
+                if let error = app.lastUpdateError {
+                    Text("软件更新：\(error)").foregroundStyle(.orange).textSelection(.enabled)
+                }
+            }.font(.caption).foregroundStyle(.secondary)
             HStack {
                 Toggle("自动续签", isOn: Binding(get: { app.autoRefresh }, set: { model.setAutomatic($0, appID: app.id) }))
                     .toggleStyle(.switch).controlSize(.small)
                 Spacer()
                 Button("立即续签") { Task { await model.refresh(appID: app.id, force: true) } }
                 Menu {
+                    Button("检查软件更新") { Task { await model.checkForUpdates(appID: app.id, force: true) } }
+                        .disabled(app.updateSource == nil)
+                    if app.previousIPAFilename != nil {
+                        Button("恢复上一份 IPA 并暂停更新") { Task { await model.restorePreviousIPA(appID: app.id) } }
+                    }
                     Button("停止托管", role: .destructive) { model.forgetApp(app) }
                 } label: { Image(systemName: "ellipsis") }.menuStyle(.borderlessButton).frame(width: 24)
             }.disabled(model.isBusy || model.isLoggingIn)
