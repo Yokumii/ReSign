@@ -1,0 +1,46 @@
+#!/bin/bash
+set -euo pipefail
+
+STAGED_FILES="$(git diff --cached --name-only --diff-filter=ACM)"
+if [[ -z "$STAGED_FILES" ]]; then
+    exit 0
+fi
+
+# 1. Block forbidden secrets, personal IPAs, certificates, and build outputs.
+FORBIDDEN_PATTERN='(^|/)\.env(\.[^/]+)?$|\.(ipa|p12|pfx|key|pem|cer|crt|mobileprovision|provisionprofile|dmg)$|^(dist|\.build|\.swiftpm)/'
+while IFS= read -r file; do
+    [[ -z "$file" ]] && continue
+    if [[ "$file" == *.env.example ]]; then
+        continue
+    fi
+    if [[ "$file" =~ $FORBIDDEN_PATTERN ]]; then
+        echo "pre-commit: 禁止提交敏感文件或构建产物：$file" >&2
+        exit 1
+    fi
+done <<< "$STAGED_FILES"
+
+# 2. Validate shell & Python syntax for staged scripts.
+while IFS= read -r file; do
+    [[ -z "$file" || ! -f "$file" ]] && continue
+    case "$file" in
+        scripts/*.py)
+            python3 -m py_compile "$file"
+            ;;
+        scripts/*.sh|build.command|deploy/anisette/*.sh|.githooks/*)
+            bash -n "$file"
+            ;;
+    esac
+done <<< "$STAGED_FILES"
+
+# 3. Warn if Vendor/ is modified without updating its UPSTREAM.md.
+if echo "$STAGED_FILES" | grep -q '^Vendor/SideSign/' && ! echo "$STAGED_FILES" | grep -q '^Vendor/SideSign/UPSTREAM\.md$'; then
+    echo "pre-commit: 警告 — 修改了 Vendor/SideSign/ 但未同步更新 Vendor/SideSign/UPSTREAM.md。" >&2
+fi
+if echo "$STAGED_FILES" | grep -q '^Vendor/MobileDevice/' && ! echo "$STAGED_FILES" | grep -q '^Vendor/MobileDevice/UPSTREAM\.md$'; then
+    echo "pre-commit: 警告 — 修改了 Vendor/MobileDevice/ 但未同步更新 Vendor/MobileDevice/UPSTREAM.md。" >&2
+fi
+
+# 4. Run full static consistency checks when tracked specs, theme, versions, deps, or Swift sources are staged.
+if echo "$STAGED_FILES" | grep -qE '^(Sources/ReSign/|Resources/Info\.plist|README\.md|DESIGN\.md|AGENTS\.md|CLAUDE\.md|Package\.swift|Package\.resolved|Vendor/.*/UPSTREAM\.md|scripts/)'; then
+    python3 scripts/check-consistency.py
+fi

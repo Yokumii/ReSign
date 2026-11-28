@@ -8,16 +8,21 @@ struct ReSignApp: App {
     var body: some Scene {
         Window("ReSign", id: "main") {
             ContentView(model: model)
-                .frame(minWidth: 900, minHeight: 620)
-                .task { model.start() }
+                .preferredColorScheme(model.effectiveAppearance.colorScheme)
+                .frame(minWidth: 920, minHeight: 640)
+                .task {
+                    model.applyAppearance()
+                    model.start()
+                }
                 .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didWakeNotification)) { _ in
                     Task { await model.scanDevices() }
                 }
         }
-        .defaultSize(width: 1060, height: 720)
+        .defaultSize(width: 1080, height: 740)
+        .windowToolbarStyle(.unified)
         .commands {
             CommandGroup(replacing: .appSettings) {
-                Button("设置…") { model.showSettings = true }.keyboardShortcut(",")
+                SettingsCommandButton(model: model)
             }
         }
         MenuBarExtra("ReSign", systemImage: model.isBusy ? "arrow.triangle.2.circlepath" : "signature") {
@@ -26,17 +31,32 @@ struct ReSignApp: App {
     }
 }
 
+private struct SettingsCommandButton: View {
+    @ObservedObject var model: AppModel
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        Button("设置…") {
+            openWindow(id: "main")
+            NSApp.activate(ignoringOtherApps: true)
+            model.showSettings = true
+        }
+        .keyboardShortcut(",")
+        .disabled(model.isBusy || model.isLoggingIn || model.showLogin || model.updateSourceAppID != nil)
+    }
+}
+
 private struct MenuContent: View {
     @ObservedObject var model: AppModel
     @Environment(\.openWindow) private var openWindow
     var body: some View {
-        Text(model.isBusy ? "正在续签…" : "托管 \(model.library.apps.count) 个应用")
+        Text(model.isBusy ? "正在处理…" : "托管 \(model.library.apps.count) 个应用")
         Button("打开 ReSign") {
             openWindow(id: "main")
             NSApp.activate(ignoringOtherApps: true)
         }
         Button("扫描设备并续签") { Task { await model.scanDevices() } }
-            .disabled(model.isBusy)
+            .disabled(model.isBusy || model.isScanning || model.startupError != nil)
         Divider()
         Button("退出 ReSign") { NSApp.terminate(nil) }
             .disabled(model.isBusy || model.isLoggingIn)

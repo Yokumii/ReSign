@@ -47,15 +47,43 @@ final class ReSignTests: XCTestCase {
         let store = try LibraryStore(root: root)
         var library = Library()
         library.apps = [sampleApp()]
+        library.settings.appearance = .dark
         try store.save(library)
         let loaded = try store.load()
         XCTAssertEqual(loaded.apps.first?.id, library.apps.first?.id)
         XCTAssertTrue(loaded.apps[0].pendingInstall)
+        XCTAssertEqual(loaded.settings.appearance, .dark)
         var app = sampleApp()
         for path in ["../other.ipa", "/tmp/other.ipa", "nested/other.ipa"] {
             app.ipaFilename = path
             XCTAssertThrowsError(try store.sourceURL(for: app))
         }
+    }
+
+    func testLegacySettingsWithoutAppearanceDefaultsToSystem() throws {
+        let store = try LibraryStore(root: root)
+        let legacyJSON = """
+            {
+              "apps": [],
+              "devices": [],
+              "schemaVersion": 1,
+              "settings": {
+                "anisetteServer": "",
+                "anisetteSource": "local",
+                "refreshLeadHours": 48,
+                "xcodeVersion": "26.0"
+              }
+            }
+            """
+        try Data(legacyJSON.utf8).write(to: root.appendingPathComponent("library.json"))
+        let loaded = try store.load()
+        XCTAssertEqual(loaded.settings.appearance, .system)
+        XCTAssertNil(AppAppearance.system.colorScheme)
+        XCTAssertNil(AppAppearance.system.nsAppearance)
+        XCTAssertEqual(AppAppearance.light.colorScheme, .light)
+        XCTAssertEqual(AppAppearance.light.nsAppearance?.name, .aqua)
+        XCTAssertEqual(AppAppearance.dark.colorScheme, .dark)
+        XCTAssertEqual(AppAppearance.dark.nsAppearance?.name, .darkAqua)
     }
 
     func testAnisetteURLPolicy() throws {

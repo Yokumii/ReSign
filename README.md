@@ -7,6 +7,7 @@ ReSign 是使用 SwiftUI 编写的 macOS iOS 应用签名与自动续签工具�
 - 单 Apple 账号与开发团队，支持 GSA 登录和设备／短信双重认证。
 - 通过 USB 或局域网连接已配对设备；自动发现不可用时可直接填写 IP，双通道在线时优先使用 USB。
 - 导入普通 IPA 或带 App Extension 的 IPA，保存独立的安装源和稳定的签名 Bundle ID。
+- 自动识别或手动绑定 GitHub Releases 与 AltStore JSON 软件源，定时检查、下载新版 IPA 并重签覆盖安装。
 - 从 IPA 提取并缓存主应用图标，缺失或无法解码时使用占位图。
 - 申请开发证书、注册设备，为主应用和各 App Extension 分别注册 App ID、获取及更新描述文件。
 - 使用 SideSign／CodeSignKit 重签，并通过 AFC／Installation Proxy 安装或覆盖更新。
@@ -60,6 +61,19 @@ python3 scripts/package-dmg.py dist/ReSign.dmg
 4. 首次运行安装后的应用时，按 iOS 提示完成信任和开发者模式设置。
 5. 保持 ReSign 在菜单栏运行；设备在线且应用临近到期时会自动处理。
 
+### 软件版本自动更新
+
+导入 IPA 时，ReSign 会扫描包内配置与二进制文件以识别更新来源：找到唯一明确来源时自动绑定，否则打开“软件更新来源”窗口供选择候选或手动填写。之后可随时在应用卡片的“更新来源…”中修改或清除绑定。
+
+支持以下 HTTPS 更新来源：
+
+- **GitHub Releases**：填写仓库地址（如 `https://github.com/owner/repo`），检查最新正式 Release 中的 IPA 附件。包含多个 IPA 时可设置通配符匹配规则（如 `*_ios_*.ipa`，`*` 匹配任意字符）。如遇 API 限额，可在“设置 → GitHub 软件更新”中配置 Personal Access Token（保存于钥匙串）。
+- **AltStore JSON 软件源**：填写软件源 JSON 地址，按原始 Bundle ID 查找应用，并按源内顺序选择兼容当前设备系统版本的条目。
+
+运行期间每小时自动检查一次，也可在应用菜单中手动检查。下载的新版 IPA 会校验文件大小、SHA-256（如提供）、原始 Bundle ID 及版本号，仅在版本或构建号更高时替换本地安装源，并在设备就绪后重签覆盖安装。
+
+自动更新与自动续签相互独立。新版安装成功前保留上一份 IPA，如更新异常可在应用菜单中选择“恢复上一份 IPA 并暂停更新”。
+
 ### App Extension
 
 支持随主应用嵌入 `PlugIns/*.appex`、通过 `NSExtension` 声明的标准 iOS App Extension，包括分享、Action、WidgetKit、通知服务／通知内容、自定义键盘、照片编辑、Intents 等扩展类型：
@@ -103,13 +117,14 @@ IP 直连必须使用已有 USB 配对，连接时校验设备身份及配对证
 | `Tests/` | 单元测试与显式启用的集成测试 |
 | `Resources/` | 应用包配置 |
 | `Vendor/` | 内置依赖源码、版本记录和许可证 |
-| `scripts/`、`build.command` | 本机构建、依赖打包和发布脚本 |
-| `.github/workflows/` | CI 与标签发布工作流 |
+| `scripts/`、`build.command`、`Makefile` | 本机构建、一致性检查、依赖打包和发布脚本 |
+| `.github/`、`.githooks/` | CI、发布工作流、PR 模板与本地提交钩子 |
+| `AGENTS.md`、`DESIGN.md` | AI Coding 工程手册（`CLAUDE.md` 软链接指向 `AGENTS.md`）与 SwiftUI 设计规范 |
 | `deploy/anisette/` | Anisette v3 服务与 Cloudflare Tunnel 部署模板 |
-| `docs/` | 测试、发布流程与后续计划 |
+| `docs/` | 架构说明、测试、发布流程与后续计划 |
 | `dist/` | 本地生成的应用包和发布附件，不纳入 Git |
 
-开发约定见 [CONTRIBUTING.md](CONTRIBUTING.md)，测试说明见 [docs/TESTING.md](docs/TESTING.md)，发布流程见 [docs/RELEASING.md](docs/RELEASING.md)，后续事项见 [docs/ROADMAP.md](docs/ROADMAP.md)。
+开发约定见 [CONTRIBUTING.md](CONTRIBUTING.md)，AI 协作规范见 [AGENTS.md](AGENTS.md)，界面设计规范见 [DESIGN.md](DESIGN.md)，架构说明见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)，测试说明见 [docs/TESTING.md](docs/TESTING.md)，发布流程见 [docs/RELEASING.md](docs/RELEASING.md)，后续事项见 [docs/ROADMAP.md](docs/ROADMAP.md)。
 
 ## 运行时数据
 
@@ -143,7 +158,7 @@ swift test --filter ReSignTests
 
 ## 版本与发布
 
-当前版本为 1.1.3，版本号以 `Resources/Info.plist` 为唯一来源。版本说明见 [docs/releases/1.1.3.md](docs/releases/1.1.3.md)。推送 `v主版本.次版本.修订版本` 标签后，GitHub Actions 会运行测试、构建 arm64 应用、打包源码和依赖，并创建 Draft Release。签名、运行器和附件说明见 [docs/RELEASING.md](docs/RELEASING.md)。
+当前版本为 1.1.4，版本号以 `Resources/Info.plist` 为唯一来源。版本说明见 [docs/releases/1.1.4.md](docs/releases/1.1.4.md)。推送 `v主版本.次版本.修订版本` 标签后，GitHub Actions 会运行测试、构建 arm64 应用、打包源码和依赖，并创建 Draft Release。签名、运行器和附件说明见 [docs/RELEASING.md](docs/RELEASING.md)。
 
 ## 许可证
 

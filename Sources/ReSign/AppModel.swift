@@ -13,22 +13,31 @@ final class AppModel: ObservableObject {
     @Published private(set) var activities: [Activity] = []
     @Published private(set) var appIcons: [UUID: NSImage] = [:]
     @Published private(set) var isBusy = false
+    @Published private(set) var isCheckingUpdates = false
     @Published private(set) var isLoggingIn = false
     @Published private(set) var needsLogin = false
     @Published private(set) var startupError: String?
     @Published private(set) var discoveryError: String?
+    @Published private(set) var loginError: String?
     @Published var notice: String?
     @Published var showLogin = false
     @Published var showSettings = false
+    @Published var updateSourceAppID: UUID?
     @Published var selectedDeviceID: String?
     @Published private(set) var verificationRequest: TwoFactorRequest?
     @Published private(set) var availableTeams: [Team] = []
+    @Published private(set) var hasGitHubToken = false
+    @Published private(set) var previewAppearance: AppAppearance?
 
+    var effectiveAppearance: AppAppearance { previewAppearance ?? library.settings.appearance }
+
+    private let vault = KeychainVault()
     private var store: LibraryStore?
     private var signing: SigningService?
     private var scanTask: Task<Void, Never>?
     private var iconTask: Task<Void, Never>?
     private var loginTask: Task<Void, Never>?
+    private var updateTask: Task<Void, Never>?
     @Published private(set) var isScanning = false
     private var pendingAuthentication: AuthSession?
     private var verificationContinuation: CheckedContinuation<TwoFactorResponse, Never>?
@@ -53,6 +62,8 @@ final class AppModel: ObservableObject {
         } catch {
             startupError = "无法加载本地资料：\(error.localizedDescription)"
         }
+        do { hasGitHubToken = try vault.read(String.self, key: "github-update-token") != nil }
+        catch { notice = "无法读取 GitHub Token：\(error.localizedDescription)" }
     }
 
     func start() {
@@ -69,6 +80,12 @@ final class AppModel: ObservableObject {
             while !Task.isCancelled {
                 do { try await Task.sleep(for: .seconds(10)) } catch { return }
                 await scanDevices()
+            }
+        }
+        updateTask = Task {
+            while !Task.isCancelled {
+                await checkForUpdates()
+                do { try await Task.sleep(for: .seconds(60)) } catch { return }
             }
         }
     }
@@ -99,13 +116,16 @@ final class AppModel: ObservableObject {
             for device in devices {
                 if let index = updated.devices.firstIndex(where: { $0.id == device.udid }) {
                     if now.timeIntervalSince(updated.devices[index].lastSeen) >= 60
-                        || (device.name != nil && device.displayName != updated.devices[index].name) {
+                        || (device.name != nil && device.displayName != updated.devices[index].name)
+                        || (device.osVersion != nil && device.osVersion != updated.devices[index].osVersion) {
                         if device.name != nil { updated.devices[index].name = device.displayName }
                         updated.devices[index].lastSeen = now
+                        if let version = device.osVersion { updated.devices[index].osVersion = version }
                         changed = true
                     }
                 } else {
-                    updated.devices.append(RememberedDevice(id: device.udid, name: device.displayName, lastSeen: now))
+                    updated.devices.append(RememberedDevice(id: device.udid, name: device.displayName, lastSeen: now,
+                                                            osVersion: device.osVersion))
                     changed = true
                     record("发现设备：\(device.displayName)")
                 }
@@ -137,14 +157,16 @@ final class AppModel: ObservableObject {
 
     func beginLogin(appleID: String, password: String) {
         guard !isBusy, !isLoggingIn, let signing, startupError == nil else { return }
+        let trimmedAppleID = appleID.trimmingCharacters(in: .whitespacesAndNewlines)
         isLoggingIn = true
+        loginError = nil
         availableTeams = []
         pendingAuthentication = nil
         let settings = library.settings
         loginTask = Task {
             defer { isLoggingIn = false; loginTask = nil }
             do {
-                let result = try await signing.login(appleID: appleID, password: password, settings: settings) { request in
+                let result = try await signing.login(appleID: trimmedAppleID, password: password, settings: settings) { request in
                     await self.requestVerification(request)
                 }
                 try Task.checkCancellation()
@@ -155,7 +177,7 @@ final class AppModel: ObservableObject {
                 record("已取消登录。")
             } catch {
                 let message = userMessage(error)
-                notice = message
+                loginError = message
                 record("登录失败：\(message)")
             }
         }
@@ -163,6 +185,7 @@ final class AppModel: ObservableObject {
 
     func selectTeam(_ team: Team) async {
         guard let authentication = pendingAuthentication, let signing else { return }
+        loginError = nil
         do {
             account = try await signing.selectTeam(team, authentication: authentication, settings: library.settings)
             needsLogin = false
@@ -178,12 +201,13 @@ final class AppModel: ObservableObject {
             }
             try commit(updated)
             Task { await refresh() }
-        } catch { notice = userMessage(error) }
+        } catch { loginError = userMessage(error) }
     }
 
     func cancelLogin() {
         loginTask?.cancel()
         answerVerification(.cancel)
+        loginError = nil
         pendingAuthentication = nil
         availableTeams = []
         showLogin = false
@@ -204,32 +228,61 @@ final class AppModel: ObservableObject {
         continuation?.resume(returning: response)
     }
 
-    func logout() async {
-        guard !isBusy, !isLoggingIn else { return }
+    @discardableResult
+    func logout() async -> Bool {
+        guard !isBusy, !isLoggingIn else {
+            loginError = "请等待当前任务完成后再退出账号。"
+            return false
+        }
+        loginError = nil
         do {
             try await signing?.logout()
             account = nil
             needsLogin = false
             record("已退出账号；保留应用与签名证书记录。")
-        } catch { notice = userMessage(error) }
+            return true
+        } catch {
+            loginError = userMessage(error)
+            return false
+        }
     }
 
-    @discardableResult
-    func saveSettings(_ settings: AppSettings) -> Bool {
-        guard !isBusy, !isLoggingIn else { return false }
-        do {
-            guard (12...72).contains(settings.refreshLeadHours), !settings.xcodeVersion.isEmpty else {
-                throw ReSignError("续签提前量需为 12～72 小时，Xcode 客户端版本不能为空。")
-            }
-            if settings.anisetteSource == .remoteV3 { _ = try settings.validatedServerURL() }
-            var updated = library
-            updated.settings = settings
-            try commit(updated)
-            if let account, account.context != settings.authenticationContext { needsLogin = true }
-            showSettings = false
-            record("设置已保存。")
-            return true
-        } catch { notice = userMessage(error); return false }
+    func applyAppearance() {
+        NSApp?.appearance = effectiveAppearance.nsAppearance
+    }
+
+    func setAppearancePreview(_ appearance: AppAppearance?) {
+        previewAppearance = appearance
+        applyAppearance()
+    }
+
+    func saveSettings(_ settings: AppSettings) throws {
+        guard !isBusy, !isLoggingIn else { throw ReSignError("请等待当前任务完成后再保存设置。") }
+        let xcodeVersion = settings.xcodeVersion.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard (12...72).contains(settings.refreshLeadHours), !xcodeVersion.isEmpty else {
+            throw ReSignError("续签提前量需为 12～72 小时，Xcode 客户端版本不能为空。")
+        }
+        var normalized = settings
+        normalized.xcodeVersion = xcodeVersion
+        if normalized.anisetteSource == .remoteV3 { _ = try normalized.validatedServerURL() }
+        var updated = library
+        updated.settings = normalized
+        try commit(updated)
+        previewAppearance = nil
+        applyAppearance()
+        if let account, account.context != normalized.authenticationContext { needsLogin = true }
+        record("设置已保存。")
+    }
+
+    func saveGitHubToken(_ input: String) throws {
+        guard !isBusy, !isLoggingIn else { throw ReSignError("请等待当前任务完成。") }
+        let token = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard token.utf8.allSatisfy({ (33...126).contains($0) }) else {
+            throw ReSignError("GitHub Token 不能包含空格、换行或非 ASCII 字符。")
+        }
+        if token.isEmpty { try vault.remove("github-update-token") }
+        else { try vault.write(token, key: "github-update-token") }
+        hasGitHubToken = !token.isEmpty
     }
 
     func importIPA(_ url: URL) async {
@@ -249,19 +302,24 @@ final class AppModel: ObservableObject {
             isBusy = false
         }
         do {
-            let info = try await Task.detached(priority: .userInitiated) {
+            let (info, discovery, discoveryError) = try await Task.detached(priority: .userInitiated) { () throws -> (IPAInfo, IPAUpdateDiscovery, String?) in
                 try FileManager.default.copyItem(at: url, to: cached)
                 let appURL = try IPAService.extract(cached, into: work)
-                return try IPAService.inspect(appURL)
+                let info = try IPAService.inspect(appURL)
+                do { return (info, try IPAUpdateService.discover(in: appURL), Optional<String>.none) }
+                catch { return (info, IPAUpdateDiscovery(source: nil, candidates: []), error.localizedDescription) }
             }.value
             var updated = library
             var obsolete: URL?
             var obsoleteIcon: URL?
+            var previous: String?
             if let index = updated.apps.firstIndex(where: {
                 $0.deviceID == device.udid && $0.originalBundleID == info.bundleID && $0.teamID == account.team.identifier
             }) {
                 obsolete = try store.sourceURL(for: updated.apps[index])
                 obsoleteIcon = try store.iconURL(for: updated.apps[index])
+                previous = updated.apps[index].previousIPAFilename
+                updated.apps[index].previousIPAFilename = nil
                 updated.apps[index].ipaFilename = filename
                 updated.apps[index].name = info.name
                 updated.apps[index].version = info.version
@@ -277,13 +335,23 @@ final class AppModel: ObservableObject {
                                                bundleID: SigningService.bundleID(original: info.bundleID, team: account.team.identifier),
                                                ipaFilename: filename))
             }
+            if let index = updated.apps.firstIndex(where: { $0.ipaFilename == filename }) {
+                updated.apps[index].updateCandidates = discovery.candidates
+                if updated.apps[index].updateSource == nil { updated.apps[index].updateSource = discovery.source }
+                updated.apps[index].lastResolvedRelease = nil
+                updated.apps[index].lastUpdateCheck = nil
+                updated.apps[index].lastUpdateError = discoveryError
+            }
             try commit(updated)
             if let obsolete { removeTemporary(obsolete) }
             if let obsoleteIcon { removeTemporary(obsoleteIcon) }
+            if let previous { removeCachedIPA(previous, store: store) }
             record("已导入：\(info.name) \(info.version)")
             if let app = library.apps.first(where: { $0.ipaFilename == filename }) {
                 appIcons[app.id] = nil
                 await loadAppIcon(for: app)
+                if let source = app.updateSource { record("已绑定更新来源：\(source.title)") }
+                else { updateSourceAppID = app.id }
                 // Import clears isBusy before the initial install starts.
                 Task { await self.refresh(appID: app.id, force: true) }
             }
@@ -334,7 +402,9 @@ final class AppModel: ObservableObject {
                     $0.lastError = nil
                     $0.failedAttempts = 0
                     $0.nextAttemptAt = nil
+                    $0.previousIPAFilename = nil
                 }
+                if let previous = app.previousIPAFilename { removeCachedIPA(previous, store: store) }
                 stages[app.id] = .complete
                 let action = app.pendingInstall ? "安装完成" : "续签完成"
                 record("\(action)：\(app.name)，有效期至 \(artifact.expiresAt.formatted(date: .abbreviated, time: .shortened))")
@@ -367,6 +437,150 @@ final class AppModel: ObservableObject {
         catch { notice = userMessage(error) }
     }
 
+    func saveUpdateSource(_ input: String, pattern: String, enabled: Bool, appID: UUID) throws {
+        guard !isCheckingUpdates, !isLoggingIn, startupError == nil else {
+            throw ReSignError("请等待当前更新检查完成后再保存。")
+        }
+        let text = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        let source: AppUpdateSource?
+        if text.isEmpty { source = nil }
+        else { source = try IPAUpdateService.source(from: text, assetPattern: pattern.trimmingCharacters(in: .whitespacesAndNewlines)) }
+        try updateApp(appID) {
+            $0.updateSource = source
+            $0.automaticUpdates = enabled
+            $0.lastUpdateCheck = nil
+            $0.lastUpdateError = nil
+            $0.lastResolvedRelease = nil
+        }
+        if let source { record("已保存更新来源：\(source.title)") }
+        else { record("已清除更新来源。") }
+        Task { await checkForUpdates(appID: appID) }
+    }
+
+    func checkForUpdates(appID: UUID? = nil, force: Bool = false) async {
+        guard !isBusy, !isScanning, !isLoggingIn, startupError == nil, let store else { return }
+        let candidates = library.apps.filter {
+            (appID == nil || $0.id == appID) && $0.updateSource != nil
+                && $0.previousIPAFilename == nil
+                && (force || $0.automaticUpdates != false)
+                && (force || Date().timeIntervalSince($0.lastUpdateCheck ?? .distantPast) >= 3600)
+        }
+        guard !candidates.isEmpty else { return }
+        do {
+            isBusy = true
+            isCheckingUpdates = true
+            defer {
+                isCheckingUpdates = false
+                isBusy = false
+            }
+            for candidate in candidates {
+                guard let app = library.apps.first(where: { $0.id == candidate.id }), let source = app.updateSource else { continue }
+                // Keep one rollback copy until installation succeeds; do not stack pending updates.
+                guard app.previousIPAFilename == nil else { continue }
+                let cached = store.ipaDirectory.appendingPathComponent(UUID().uuidString + ".ipa")
+                let work = store.workDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+                var committed = false
+                defer {
+                    removeTemporary(work)
+                    if !committed { removeTemporary(cached) }
+                }
+                do {
+                    try updateApp(app.id) { $0.lastUpdateCheck = Date() }
+                    let osVersion = connected.first { $0.udid == app.deviceID }?.osVersion
+                        ?? library.devices.first { $0.id == app.deviceID }?.osVersion
+                    let token: String?
+                    if source.kind == .github { token = try vault.read(String.self, key: "github-update-token") }
+                    else { token = nil }
+                    let release = try await IPAUpdateService.release(for: source, bundleID: app.originalBundleID,
+                                                                     osVersion: osVersion, githubToken: token)
+                    if !force, release.identifier == app.lastResolvedRelease {
+                        try updateApp(app.id) { $0.lastUpdateError = nil }
+                        continue
+                    }
+                    record("检查更新：\(app.name)")
+                    try await IPAUpdateService.download(release, to: cached)
+                    let info = try await Task.detached(priority: .utility) {
+                        try IPAUpdateService.inspectUpdate(cached, into: work, release: release, app: app, osVersion: osVersion)
+                    }.value
+                    guard IPAUpdateService.isNewer(version: info.version, build: info.buildVersion, than: app) else {
+                        try updateApp(app.id) {
+                            $0.lastResolvedRelease = release.identifier
+                            $0.lastUpdateError = nil
+                        }
+                        if force { record("\(app.name) 没有更高版本的 IPA。") }
+                        continue
+                    }
+                    try updateApp(app.id) {
+                        $0.previousIPAFilename = app.ipaFilename
+                        $0.ipaFilename = cached.lastPathComponent
+                        $0.name = info.name
+                        $0.version = info.version
+                        $0.buildVersion = info.buildVersion
+                        $0.pendingInstall = true
+                        $0.lastError = nil
+                        $0.failedAttempts = 0
+                        $0.nextAttemptAt = nil
+                        $0.lastResolvedRelease = release.identifier
+                        $0.lastUpdateError = nil
+                    }
+                    committed = true
+                    stages[app.id] = .waiting
+                    appIcons[app.id] = nil
+                    if let updated = library.apps.first(where: { $0.id == app.id }) { await loadAppIcon(for: updated) }
+                    record("已下载更新：\(info.name) \(info.version)，等待设备连接并安装。")
+                } catch {
+                    let message = userMessage(error)
+                    record("\(app.name) 更新检查失败：\(message)")
+                    do { try updateApp(app.id) { $0.lastUpdateError = message } }
+                    catch { startupError = "无法保存更新状态：\(userMessage(error))"; break }
+                }
+            }
+        }
+        // A failed update request must not prevent renewal with the existing source IPA.
+        await refresh()
+    }
+
+    func restorePreviousIPA(appID: UUID) async {
+        guard !isBusy, !isScanning, !isLoggingIn, let store,
+              let app = library.apps.first(where: { $0.id == appID }), let previous = app.previousIPAFilename else { return }
+        isBusy = true
+        defer { isBusy = false }
+        let work = store.workDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { removeTemporary(work) }
+        do {
+            var old = app
+            old.ipaFilename = previous
+            let source = try store.sourceURL(for: old)
+            let info = try await Task.detached(priority: .utility) {
+                try IPAService.inspect(IPAService.extract(source, into: work))
+            }.value
+            guard info.bundleID == app.originalBundleID else { throw ReSignError("上一份 IPA 的应用身份不一致。") }
+            try updateApp(app.id) {
+                $0.ipaFilename = previous
+                $0.previousIPAFilename = nil
+                $0.name = info.name
+                $0.version = info.version
+                $0.buildVersion = info.buildVersion
+                $0.pendingInstall = true
+                $0.failedAttempts = 0
+                $0.nextAttemptAt = nil
+                $0.lastError = nil
+                $0.automaticUpdates = false
+            }
+            removeCachedIPA(app.ipaFilename, store: store)
+            stages[app.id] = .waiting
+            appIcons[app.id] = nil
+            await loadAppIcon(for: old)
+            record("已恢复 \(info.name) 的上一份 IPA，并暂停自动更新；可点击立即续签安装。")
+        } catch { notice = userMessage(error) }
+    }
+
+    private func removeCachedIPA(_ filename: String, store: LibraryStore) {
+        guard filename == URL(fileURLWithPath: filename).lastPathComponent, filename.hasSuffix(".ipa") else { return }
+        removeTemporary(store.ipaDirectory.appendingPathComponent(filename))
+        removeTemporary(store.root.appendingPathComponent("Icons").appendingPathComponent(String(filename.dropLast(4)) + ".png"))
+    }
+
     func forgetApp(_ app: ManagedApp) {
         guard !isBusy, let store else { return }
         do {
@@ -379,6 +593,7 @@ final class AppModel: ObservableObject {
             appIcons[app.id] = nil
             removeTemporary(url)
             removeTemporary(iconURL)
+            if let previous = app.previousIPAFilename { removeCachedIPA(previous, store: store) }
             record("已停止托管：\(app.name)，设备上的应用仍保留。")
         } catch { notice = userMessage(error) }
     }

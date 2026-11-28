@@ -31,6 +31,8 @@ jobs:
           persist-credentials: false
       - name: Prepare build environment
         run: bash scripts/ci-setup.sh
+      - name: Run static checks
+        run: bash scripts/check.sh --static
       - name: Run default tests
         run: |
           unset RESIGN_DEVICE_TEST RESIGN_INTEGRATION_URL RESIGN_GSA_PROBE
