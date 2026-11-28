@@ -33,9 +33,9 @@ struct UpdateSourceView: View {
                 }
             }
             TextField("GitHub 仓库或 AltStore JSON 软件源", text: $address,
-                      prompt: Text("https://github.com/owner/repo"))
+                      prompt: Text(verbatim: "https://github.com/owner/repo"))
                 .textFieldStyle(.roundedBorder)
-            TextField("IPA 附件匹配规则（可选）", text: $pattern, prompt: Text("例如 *_ios_*.ipa"))
+            TextField("IPA 附件匹配规则（可选）", text: $pattern, prompt: Text(verbatim: "例如 *_ios_*.ipa"))
                 .textFieldStyle(.roundedBorder)
             Text("GitHub 包含多个 IPA 时填写通配符规则（* 匹配任意字符）；JSON 软件源按原始 Bundle ID 匹配。地址留空可清除绑定。")
                 .font(.caption).foregroundStyle(.secondary)
@@ -53,7 +53,7 @@ struct UpdateSourceView: View {
                     } catch { errorMessage = error.localizedDescription }
                 }
                 .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
-                .disabled(model.isBusy || model.isLoggingIn)
+                .disabled(model.isCheckingUpdates || model.isLoggingIn)
             }
         }.padding(24).frame(width: 570)
     }

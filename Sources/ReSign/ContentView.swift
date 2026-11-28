@@ -46,7 +46,7 @@ struct ContentView: View {
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     Button(model.account == nil ? "登录 Apple 账号" : "账号与团队") { model.showLogin = true }
-                        .disabled(model.isBusy)
+                        .disabled(model.isBusy || model.startupError != nil)
                 }.padding(16)
             }.navigationSplitViewColumnWidth(min: 220, ideal: 240, max: 290)
         } detail: {
@@ -76,7 +76,7 @@ struct ContentView: View {
             .toolbar {
                 ToolbarItemGroup {
                     Button { Task { await model.scanDevices() } } label: { Label("扫描设备", systemImage: "arrow.clockwise") }
-                        .disabled(model.isBusy || model.isScanning)
+                        .disabled(model.isBusy || model.isScanning || model.startupError != nil)
                     Button {
                         networkDevice = model.library.devices.first { $0.id == model.selectedDeviceID }
                     } label: { Label("通过 IP 连接", systemImage: "network") }
@@ -207,7 +207,7 @@ private struct AppCard: View {
                     }
                     Spacer()
                     Button(app.updateSource == nil ? "填写更新来源…" : "更新来源…") { model.updateSourceAppID = app.id }
-                        .disabled(model.isBusy || model.isLoggingIn)
+                        .disabled(model.isCheckingUpdates || model.isLoggingIn)
                 }
                 if let checked = app.lastUpdateCheck {
                     Text("上次检查：\(checked.formatted(date: .abbreviated, time: .shortened))")
@@ -222,17 +222,21 @@ private struct AppCard: View {
             HStack {
                 Toggle("自动续签", isOn: Binding(get: { app.autoRefresh }, set: { model.setAutomatic($0, appID: app.id) }))
                     .toggleStyle(.switch).controlSize(.small)
+                    .disabled(model.isBusy || model.isLoggingIn)
                 Spacer()
                 Button("立即续签") { Task { await model.refresh(appID: app.id, force: true) } }
+                    .disabled(model.isBusy || model.isScanning || model.isLoggingIn)
                 Menu {
                     Button("检查软件更新") { Task { await model.checkForUpdates(appID: app.id, force: true) } }
-                        .disabled(app.updateSource == nil)
+                        .disabled(app.updateSource == nil || app.previousIPAFilename != nil || model.isScanning)
                     if app.previousIPAFilename != nil {
                         Button("恢复上一份 IPA 并暂停更新") { Task { await model.restorePreviousIPA(appID: app.id) } }
+                            .disabled(model.isScanning)
                     }
                     Button("停止托管", role: .destructive) { model.forgetApp(app) }
-                } label: { Image(systemName: "ellipsis") }.menuStyle(.borderlessButton).frame(width: 24)
-            }.disabled(model.isBusy || model.isLoggingIn)
+                } label: { Image(systemName: "ellipsis") }.menuStyle(.borderlessButton).fixedSize()
+                    .disabled(model.isBusy || model.isLoggingIn)
+            }
         }
         .padding(18)
         .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 14))

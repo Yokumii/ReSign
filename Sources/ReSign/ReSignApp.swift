@@ -17,12 +17,27 @@ struct ReSignApp: App {
         .defaultSize(width: 1060, height: 720)
         .commands {
             CommandGroup(replacing: .appSettings) {
-                Button("设置…") { model.showSettings = true }.keyboardShortcut(",")
+                SettingsCommandButton(model: model)
             }
         }
         MenuBarExtra("ReSign", systemImage: model.isBusy ? "arrow.triangle.2.circlepath" : "signature") {
             MenuContent(model: model)
         }
+    }
+}
+
+private struct SettingsCommandButton: View {
+    @ObservedObject var model: AppModel
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        Button("设置…") {
+            openWindow(id: "main")
+            NSApp.activate(ignoringOtherApps: true)
+            model.showSettings = true
+        }
+        .keyboardShortcut(",")
+        .disabled(model.isBusy || model.isLoggingIn || model.showLogin || model.updateSourceAppID != nil)
     }
 }
 
@@ -36,7 +51,7 @@ private struct MenuContent: View {
             NSApp.activate(ignoringOtherApps: true)
         }
         Button("扫描设备并续签") { Task { await model.scanDevices() } }
-            .disabled(model.isBusy)
+            .disabled(model.isBusy || model.isScanning || model.startupError != nil)
         Divider()
         Button("退出 ReSign") { NSApp.terminate(nil) }
             .disabled(model.isBusy || model.isLoggingIn)

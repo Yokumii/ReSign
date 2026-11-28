@@ -13,10 +13,12 @@ final class AppModel: ObservableObject {
     @Published private(set) var activities: [Activity] = []
     @Published private(set) var appIcons: [UUID: NSImage] = [:]
     @Published private(set) var isBusy = false
+    @Published private(set) var isCheckingUpdates = false
     @Published private(set) var isLoggingIn = false
     @Published private(set) var needsLogin = false
     @Published private(set) var startupError: String?
     @Published private(set) var discoveryError: String?
+    @Published private(set) var loginError: String?
     @Published var notice: String?
     @Published var showLogin = false
     @Published var showSettings = false
@@ -152,14 +154,16 @@ final class AppModel: ObservableObject {
 
     func beginLogin(appleID: String, password: String) {
         guard !isBusy, !isLoggingIn, let signing, startupError == nil else { return }
+        let trimmedAppleID = appleID.trimmingCharacters(in: .whitespacesAndNewlines)
         isLoggingIn = true
+        loginError = nil
         availableTeams = []
         pendingAuthentication = nil
         let settings = library.settings
         loginTask = Task {
             defer { isLoggingIn = false; loginTask = nil }
             do {
-                let result = try await signing.login(appleID: appleID, password: password, settings: settings) { request in
+                let result = try await signing.login(appleID: trimmedAppleID, password: password, settings: settings) { request in
                     await self.requestVerification(request)
                 }
                 try Task.checkCancellation()
@@ -170,7 +174,7 @@ final class AppModel: ObservableObject {
                 record("已取消登录。")
             } catch {
                 let message = userMessage(error)
-                notice = message
+                loginError = message
                 record("登录失败：\(message)")
             }
         }
@@ -178,6 +182,7 @@ final class AppModel: ObservableObject {
 
     func selectTeam(_ team: Team) async {
         guard let authentication = pendingAuthentication, let signing else { return }
+        loginError = nil
         do {
             account = try await signing.selectTeam(team, authentication: authentication, settings: library.settings)
             needsLogin = false
@@ -193,12 +198,13 @@ final class AppModel: ObservableObject {
             }
             try commit(updated)
             Task { await refresh() }
-        } catch { notice = userMessage(error) }
+        } catch { loginError = userMessage(error) }
     }
 
     func cancelLogin() {
         loginTask?.cancel()
         answerVerification(.cancel)
+        loginError = nil
         pendingAuthentication = nil
         availableTeams = []
         showLogin = false
@@ -219,32 +225,39 @@ final class AppModel: ObservableObject {
         continuation?.resume(returning: response)
     }
 
-    func logout() async {
-        guard !isBusy, !isLoggingIn else { return }
+    @discardableResult
+    func logout() async -> Bool {
+        guard !isBusy, !isLoggingIn else {
+            loginError = "请等待当前任务完成后再退出账号。"
+            return false
+        }
+        loginError = nil
         do {
             try await signing?.logout()
             account = nil
             needsLogin = false
             record("已退出账号；保留应用与签名证书记录。")
-        } catch { notice = userMessage(error) }
+            return true
+        } catch {
+            loginError = userMessage(error)
+            return false
+        }
     }
 
-    @discardableResult
-    func saveSettings(_ settings: AppSettings) -> Bool {
-        guard !isBusy, !isLoggingIn else { return false }
-        do {
-            guard (12...72).contains(settings.refreshLeadHours), !settings.xcodeVersion.isEmpty else {
-                throw ReSignError("续签提前量需为 12～72 小时，Xcode 客户端版本不能为空。")
-            }
-            if settings.anisetteSource == .remoteV3 { _ = try settings.validatedServerURL() }
-            var updated = library
-            updated.settings = settings
-            try commit(updated)
-            if let account, account.context != settings.authenticationContext { needsLogin = true }
-            showSettings = false
-            record("设置已保存。")
-            return true
-        } catch { notice = userMessage(error); return false }
+    func saveSettings(_ settings: AppSettings) throws {
+        guard !isBusy, !isLoggingIn else { throw ReSignError("请等待当前任务完成后再保存设置。") }
+        let xcodeVersion = settings.xcodeVersion.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard (12...72).contains(settings.refreshLeadHours), !xcodeVersion.isEmpty else {
+            throw ReSignError("续签提前量需为 12～72 小时，Xcode 客户端版本不能为空。")
+        }
+        var normalized = settings
+        normalized.xcodeVersion = xcodeVersion
+        if normalized.anisetteSource == .remoteV3 { _ = try normalized.validatedServerURL() }
+        var updated = library
+        updated.settings = normalized
+        try commit(updated)
+        if let account, account.context != normalized.authenticationContext { needsLogin = true }
+        record("设置已保存。")
     }
 
     func saveGitHubToken(_ input: String) throws {
@@ -411,7 +424,9 @@ final class AppModel: ObservableObject {
     }
 
     func saveUpdateSource(_ input: String, pattern: String, enabled: Bool, appID: UUID) throws {
-        guard !isBusy, !isLoggingIn else { throw ReSignError("请等待当前任务完成。") }
+        guard !isCheckingUpdates, !isLoggingIn, startupError == nil else {
+            throw ReSignError("请等待当前更新检查完成后再保存。")
+        }
         let text = input.trimmingCharacters(in: .whitespacesAndNewlines)
         let source: AppUpdateSource?
         if text.isEmpty { source = nil }
@@ -432,74 +447,81 @@ final class AppModel: ObservableObject {
         guard !isBusy, !isScanning, !isLoggingIn, startupError == nil, let store else { return }
         let candidates = library.apps.filter {
             (appID == nil || $0.id == appID) && $0.updateSource != nil
+                && $0.previousIPAFilename == nil
                 && (force || $0.automaticUpdates != false)
                 && (force || Date().timeIntervalSince($0.lastUpdateCheck ?? .distantPast) >= 3600)
         }
         guard !candidates.isEmpty else { return }
-        isBusy = true
-        for candidate in candidates {
-            guard let app = library.apps.first(where: { $0.id == candidate.id }), let source = app.updateSource else { continue }
-            // Keep one rollback copy until installation succeeds; do not stack pending updates.
-            guard app.previousIPAFilename == nil else { continue }
-            let cached = store.ipaDirectory.appendingPathComponent(UUID().uuidString + ".ipa")
-            let work = store.workDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
-            var committed = false
+        do {
+            isBusy = true
+            isCheckingUpdates = true
             defer {
-                removeTemporary(work)
-                if !committed { removeTemporary(cached) }
+                isCheckingUpdates = false
+                isBusy = false
             }
-            do {
-                try updateApp(app.id) { $0.lastUpdateCheck = Date() }
-                let osVersion = connected.first { $0.udid == app.deviceID }?.osVersion
-                    ?? library.devices.first { $0.id == app.deviceID }?.osVersion
-                let token: String?
-                if source.kind == .github { token = try vault.read(String.self, key: "github-update-token") }
-                else { token = nil }
-                let release = try await IPAUpdateService.release(for: source, bundleID: app.originalBundleID,
-                                                                 osVersion: osVersion, githubToken: token)
-                if !force, release.identifier == app.lastResolvedRelease {
-                    try updateApp(app.id) { $0.lastUpdateError = nil }
-                    continue
+            for candidate in candidates {
+                guard let app = library.apps.first(where: { $0.id == candidate.id }), let source = app.updateSource else { continue }
+                // Keep one rollback copy until installation succeeds; do not stack pending updates.
+                guard app.previousIPAFilename == nil else { continue }
+                let cached = store.ipaDirectory.appendingPathComponent(UUID().uuidString + ".ipa")
+                let work = store.workDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+                var committed = false
+                defer {
+                    removeTemporary(work)
+                    if !committed { removeTemporary(cached) }
                 }
-                record("检查更新：\(app.name)")
-                try await IPAUpdateService.download(release, to: cached)
-                let info = try await Task.detached(priority: .utility) {
-                    try IPAUpdateService.inspectUpdate(cached, into: work, release: release, app: app, osVersion: osVersion)
-                }.value
-                guard IPAUpdateService.isNewer(version: info.version, build: info.buildVersion, than: app) else {
+                do {
+                    try updateApp(app.id) { $0.lastUpdateCheck = Date() }
+                    let osVersion = connected.first { $0.udid == app.deviceID }?.osVersion
+                        ?? library.devices.first { $0.id == app.deviceID }?.osVersion
+                    let token: String?
+                    if source.kind == .github { token = try vault.read(String.self, key: "github-update-token") }
+                    else { token = nil }
+                    let release = try await IPAUpdateService.release(for: source, bundleID: app.originalBundleID,
+                                                                     osVersion: osVersion, githubToken: token)
+                    if !force, release.identifier == app.lastResolvedRelease {
+                        try updateApp(app.id) { $0.lastUpdateError = nil }
+                        continue
+                    }
+                    record("检查更新：\(app.name)")
+                    try await IPAUpdateService.download(release, to: cached)
+                    let info = try await Task.detached(priority: .utility) {
+                        try IPAUpdateService.inspectUpdate(cached, into: work, release: release, app: app, osVersion: osVersion)
+                    }.value
+                    guard IPAUpdateService.isNewer(version: info.version, build: info.buildVersion, than: app) else {
+                        try updateApp(app.id) {
+                            $0.lastResolvedRelease = release.identifier
+                            $0.lastUpdateError = nil
+                        }
+                        if force { record("\(app.name) 没有更高版本的 IPA。") }
+                        continue
+                    }
                     try updateApp(app.id) {
+                        $0.previousIPAFilename = app.ipaFilename
+                        $0.ipaFilename = cached.lastPathComponent
+                        $0.name = info.name
+                        $0.version = info.version
+                        $0.buildVersion = info.buildVersion
+                        $0.pendingInstall = true
+                        $0.lastError = nil
+                        $0.failedAttempts = 0
+                        $0.nextAttemptAt = nil
                         $0.lastResolvedRelease = release.identifier
                         $0.lastUpdateError = nil
                     }
-                    if force { record("\(app.name) 没有更高版本的 IPA。") }
-                    continue
+                    committed = true
+                    stages[app.id] = .waiting
+                    appIcons[app.id] = nil
+                    if let updated = library.apps.first(where: { $0.id == app.id }) { await loadAppIcon(for: updated) }
+                    record("已下载更新：\(info.name) \(info.version)，等待设备连接并安装。")
+                } catch {
+                    let message = userMessage(error)
+                    record("\(app.name) 更新检查失败：\(message)")
+                    do { try updateApp(app.id) { $0.lastUpdateError = message } }
+                    catch { startupError = "无法保存更新状态：\(userMessage(error))"; break }
                 }
-                try updateApp(app.id) {
-                    $0.previousIPAFilename = app.ipaFilename
-                    $0.ipaFilename = cached.lastPathComponent
-                    $0.name = info.name
-                    $0.version = info.version
-                    $0.buildVersion = info.buildVersion
-                    $0.pendingInstall = true
-                    $0.lastError = nil
-                    $0.failedAttempts = 0
-                    $0.nextAttemptAt = nil
-                    $0.lastResolvedRelease = release.identifier
-                    $0.lastUpdateError = nil
-                }
-                committed = true
-                stages[app.id] = .waiting
-                appIcons[app.id] = nil
-                if let updated = library.apps.first(where: { $0.id == app.id }) { await loadAppIcon(for: updated) }
-                record("已下载更新：\(info.name) \(info.version)，等待设备连接并安装。")
-            } catch {
-                let message = userMessage(error)
-                record("\(app.name) 更新检查失败：\(message)")
-                do { try updateApp(app.id) { $0.lastUpdateError = message } }
-                catch { startupError = "无法保存更新状态：\(userMessage(error))"; break }
             }
         }
-        isBusy = false
         // A failed update request must not prevent renewal with the existing source IPA.
         await refresh()
     }

@@ -9,6 +9,8 @@ struct SettingsView: View {
     @State private var serviceMessage: String?
     @State private var githubToken = ""
     @State private var tokenMessage: String?
+    @State private var tokenMessageIsError = false
+    @State private var errorMessage: String?
 
     init(model: AppModel) {
         self.model = model
@@ -22,8 +24,7 @@ struct SettingsView: View {
             Form {
                 Section("自动续签") {
                     Stepper("提前 \(settings.refreshLeadHours) 小时续签", value: $settings.refreshLeadHours, in: 12...72, step: 12)
-                    Toggle("登录 Mac 时启动", isOn: $launchAtLogin)
-                        .onChange(of: launchAtLogin) { _, enabled in updateLoginItem(enabled) }
+                    Toggle("登录 Mac 时启动", isOn: Binding(get: { launchAtLogin }, set: { updateLoginItem($0) }))
                     Text("关闭主窗口后，菜单栏中的 ReSign 会继续运行。Mac 唤醒和设备重新连接时也会处理到期任务。")
                         .font(.caption).foregroundStyle(.secondary)
                     if let serviceMessage { Text(serviceMessage).font(.caption).foregroundStyle(.orange) }
@@ -33,7 +34,7 @@ struct SettingsView: View {
                         ForEach(AnisetteSource.allCases, id: \.self) { Text($0.title).tag($0) }
                     }
                     if settings.anisetteSource == .remoteV3 {
-                        TextField("服务根地址", text: $settings.anisetteServer, prompt: Text("https://…"))
+                        TextField("服务根地址", text: $settings.anisetteServer, prompt: Text(verbatim: "https://…"))
                         Text("仅使用你指定的 v3 服务。改变认证方式后需要重新登录。")
                             .font(.caption).foregroundStyle(.secondary)
                     } else {
@@ -52,30 +53,49 @@ struct SettingsView: View {
                             do {
                                 try model.saveGitHubToken(githubToken)
                                 githubToken = ""
+                                tokenMessageIsError = false
                                 tokenMessage = "Token 已保存。"
-                            } catch { tokenMessage = error.localizedDescription }
+                            } catch {
+                                tokenMessageIsError = true
+                                tokenMessage = error.localizedDescription
+                            }
                         }.disabled(githubToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                         if model.hasGitHubToken {
                             Button("清除 Token") {
                                 do {
                                     try model.saveGitHubToken("")
                                     githubToken = ""
+                                    tokenMessageIsError = false
                                     tokenMessage = "Token 已清除。"
-                                } catch { tokenMessage = error.localizedDescription }
+                                } catch {
+                                    tokenMessageIsError = true
+                                    tokenMessage = error.localizedDescription
+                                }
                             }
                         }
                     }.disabled(model.isBusy || model.isLoggingIn)
                     Text("Token 独立保存到 macOS 钥匙串，用于提高 GitHub API 请求配额。")
                         .font(.caption).foregroundStyle(.secondary)
-                    if let tokenMessage { Text(tokenMessage).font(.caption).foregroundStyle(.secondary) }
+                    if let tokenMessage {
+                        Text(tokenMessage).font(.caption)
+                            .foregroundStyle(tokenMessageIsError ? Color.orange : Color.secondary)
+                    }
                 }
             }.formStyle(.grouped)
+            if let errorMessage { Text(errorMessage).font(.callout).foregroundStyle(.orange) }
             HStack {
                 Button("打开数据目录") { model.revealData() }
                 Spacer()
                 Button("取消") { dismiss() }.keyboardShortcut(.cancelAction)
-                Button("保存") { if model.saveSettings(settings) { dismiss() } }
-                    .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
+                Button("保存") {
+                    do {
+                        errorMessage = nil
+                        try model.saveSettings(settings)
+                        dismiss()
+                    } catch { errorMessage = error.localizedDescription }
+                }
+                .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
+                .disabled(model.isBusy || model.isLoggingIn)
             }
         }.padding(24).frame(width: 570, height: 700)
     }
@@ -84,6 +104,7 @@ struct SettingsView: View {
         do {
             if enabled { try SMAppService.mainApp.register() }
             else { try SMAppService.mainApp.unregister() }
+            launchAtLogin = SMAppService.mainApp.status == .enabled
             if SMAppService.mainApp.status == .requiresApproval {
                 serviceMessage = "请在系统设置的“登录项与扩展”中允许 ReSign。"
                 SMAppService.openSystemSettingsLoginItems()

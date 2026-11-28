@@ -7,6 +7,7 @@ struct LoginView: View {
     @State private var password = ""
     @State private var code = ""
     @State private var settings: AppSettings
+    @State private var localError: String?
 
     init(model: AppModel) {
         self.model = model
@@ -45,19 +46,28 @@ struct LoginView: View {
             } else {
                 credentials
             }
+            if let error = localError ?? model.loginError {
+                Text(error).font(.callout).foregroundStyle(.orange).textSelection(.enabled)
+            }
             Divider()
             HStack {
-                if model.account != nil && !model.isLoggingIn {
-                    Button("退出账号", role: .destructive) { Task { await model.logout(); model.showLogin = false } }
+                if model.account != nil && !model.isLoggingIn && model.availableTeams.isEmpty {
+                    Button("退出账号", role: .destructive) {
+                        Task {
+                            localError = nil
+                            if await model.logout() { model.showLogin = false }
+                        }
+                    }
+                    .disabled(model.isBusy)
                 }
                 Spacer()
-                Button(model.isLoggingIn ? "取消登录" : "关闭") { model.cancelLogin() }
+                Button(model.isLoggingIn || !model.availableTeams.isEmpty ? "取消登录" : "关闭") { model.cancelLogin() }
                     .keyboardShortcut(.cancelAction)
             }
         }
         .padding(28).frame(width: 520)
-        .interactiveDismissDisabled(model.isLoggingIn)
-        .onChange(of: model.verificationRequest) { _, _ in code = "" }
+        .interactiveDismissDisabled(model.isLoggingIn || !model.availableTeams.isEmpty)
+        .onChange(of: model.verificationRequest) { _, _ in code = ""; localError = nil }
     }
 
     private var credentials: some View {
@@ -76,7 +86,8 @@ struct LoginView: View {
                         ForEach(AnisetteSource.allCases, id: \.self) { source in Text(source.title).tag(source) }
                     }
                     if settings.anisetteSource == .remoteV3 {
-                        TextField("https://你的 Anisette v3 服务", text: $settings.anisetteServer)
+                        TextField("Anisette v3 服务地址", text: $settings.anisetteServer,
+                                  prompt: Text(verbatim: "https://你的 Anisette v3 服务"))
                             .textFieldStyle(.roundedBorder)
                         Text("服务仅参与 Anisette 数据生成；Apple 账号密码由客户端发给 Apple。")
                             .font(.caption).foregroundStyle(.secondary)
@@ -89,13 +100,17 @@ struct LoginView: View {
             if model.isLoggingIn {
                 HStack { ProgressView().controlSize(.small); Text("正在与 Apple 建立登录会话…").font(.callout) }
             } else {
+                let trimmedAppleID = appleID.trimmingCharacters(in: .whitespacesAndNewlines)
                 Button("登录") {
-                    guard model.saveSettings(settings) else { return }
-                    model.beginLogin(appleID: appleID, password: password)
-                    password = ""
+                    do {
+                        localError = nil
+                        try model.saveSettings(settings)
+                        model.beginLogin(appleID: trimmedAppleID, password: password)
+                        password = ""
+                    } catch { localError = error.localizedDescription }
                 }
                 .buttonStyle(.borderedProminent).controlSize(.large)
-                .disabled(appleID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || password.isEmpty)
+                .disabled(trimmedAppleID.isEmpty || password.isEmpty || model.isBusy)
                 .keyboardShortcut(.defaultAction)
             }
         }.disabled(model.isLoggingIn)
@@ -128,12 +143,13 @@ struct LoginView: View {
     }
 
     private var codeEntry: some View {
-        HStack {
+        let digits = code.filter { !$0.isWhitespace }
+        return HStack {
             TextField("六位验证码", text: $code)
                 .textFieldStyle(.roundedBorder).textContentType(.oneTimeCode)
-            Button("继续") { model.answerVerification(.verificationCode(code)) }
+            Button("继续") { model.answerVerification(.verificationCode(digits)) }
                 .buttonStyle(.borderedProminent)
-                .disabled(code.count != 6 || !code.allSatisfy { "0123456789".contains($0) })
+                .disabled(digits.count != 6 || !digits.allSatisfy { "0123456789".contains($0) })
                 .keyboardShortcut(.defaultAction)
         }
     }
