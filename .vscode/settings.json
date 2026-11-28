@@ -1,0 +1,27 @@
+{
+  "editor.formatOnSave": false,
+  "editor.insertSpaces": true,
+  "editor.tabSize": 4,
+  "files.eol": "\n",
+  "files.insertFinalNewline": true,
+  "files.watcherExclude": {
+    "**/.build/**": true,
+    "**/.swiftpm/**": true,
+    "**/dist/**": true
+  },
+  "search.exclude": {
+    "**/.build": true,
+    "**/.swiftpm": true,
+    "**/dist": true,
+    "**/Vendor": true
+  },
+  "[json]": {
+    "editor.tabSize": 2
+  },
+  "[yaml]": {
+    "editor.tabSize": 2
+  },
+  "[markdown]": {
+    "files.trimTrailingWhitespace": false
+  }
+}

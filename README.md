@@ -117,13 +117,14 @@ IP 直连必须使用已有 USB 配对，连接时校验设备身份及配对证
 | `Tests/` | 单元测试与显式启用的集成测试 |
 | `Resources/` | 应用包配置 |
 | `Vendor/` | 内置依赖源码、版本记录和许可证 |
-| `scripts/`、`build.command` | 本机构建、依赖打包和发布脚本 |
-| `.github/workflows/` | CI 与标签发布工作流 |
+| `scripts/`、`build.command`、`Makefile` | 本机构建、一致性检查、依赖打包和发布脚本 |
+| `.github/`、`.githooks/` | CI、发布工作流、PR 模板与本地提交钩子 |
+| `AGENTS.md`、`DESIGN.md` | AI Coding 工程手册（`CLAUDE.md` 软链接指向 `AGENTS.md`）与 SwiftUI 设计规范 |
 | `deploy/anisette/` | Anisette v3 服务与 Cloudflare Tunnel 部署模板 |
-| `docs/` | 测试、发布流程与后续计划 |
+| `docs/` | 架构说明、测试、发布流程与后续计划 |
 | `dist/` | 本地生成的应用包和发布附件，不纳入 Git |
 
-开发约定见 [CONTRIBUTING.md](CONTRIBUTING.md)，测试说明见 [docs/TESTING.md](docs/TESTING.md)，发布流程见 [docs/RELEASING.md](docs/RELEASING.md)，后续事项见 [docs/ROADMAP.md](docs/ROADMAP.md)。
+开发约定见 [CONTRIBUTING.md](CONTRIBUTING.md)，AI 协作规范见 [AGENTS.md](AGENTS.md)，界面设计规范见 [DESIGN.md](DESIGN.md)，架构说明见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)，测试说明见 [docs/TESTING.md](docs/TESTING.md)，发布流程见 [docs/RELEASING.md](docs/RELEASING.md)，后续事项见 [docs/ROADMAP.md](docs/ROADMAP.md)。
 
 ## 运行时数据
 

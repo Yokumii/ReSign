@@ -12,19 +12,24 @@ brew install libplist libusbmuxd libimobiledevice-glue openssl@4 pkgconf
 
 ## 构建与测试
 
-执行完整构建：
+仓库根目录提供 `Makefile` 统一入口，首次开发可启用内置提交前钩子：
 
 ```sh
+make hooks       # 启用 .githooks/pre-commit
+make check       # 静态一致性检查 + 默认单元测试
+make build       # 完整 release 构建（等价于 bash scripts/build-app.sh）
+make verify      # CI 等价全量验证（lint + test + build + codesign 严格校验）
+```
+
+也可直接执行底层命令：
+
+```sh
+bash scripts/check.sh --static
+swift test --filter ReSignTests
 bash scripts/build-app.sh
 ```
 
-运行默认测试：
-
-```sh
-swift test --filter ReSignTests
-```
-
-需要真实 USB／局域网设备或外部服务的测试通过环境变量显式启用，命令见 [docs/TESTING.md](docs/TESTING.md)。提交代码前至少运行与改动范围相关的测试；涉及认证、签名、设备安装或持久化的改动应同时记录已验证范围。
+需要真实 USB／局域网设备或外部服务的测试通过环境变量显式启用，命令见 [docs/TESTING.md](docs/TESTING.md)。架构地图见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)，界面设计规范见 [DESIGN.md](DESIGN.md)，AI 协作规范见 [AGENTS.md](AGENTS.md)。提交代码前至少运行 `make check`；涉及认证、签名、设备安装或持久化的改动应同时记录已验证范围。
 
 ## 代码约定
 
