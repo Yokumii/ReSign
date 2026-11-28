@@ -88,11 +88,47 @@ enum AnisetteSource: String, Codable, CaseIterable, Sendable, Hashable {
     var title: String { self == .local ? "本机认证" : "Anisette v3 服务" }
 }
 
+enum AppAppearance: String, Codable, CaseIterable, Sendable, Hashable {
+    case system, light, dark
+
+    var title: String {
+        switch self {
+        case .system: return "跟随系统"
+        case .light: return "浅色"
+        case .dark: return "深色"
+        }
+    }
+}
+
 struct AppSettings: Codable, Equatable, Sendable {
     var anisetteSource: AnisetteSource = .local
     var anisetteServer = ""
     var refreshLeadHours = 48
     var xcodeVersion = "26.0"
+    var appearance: AppAppearance = .system
+
+    init(
+        anisetteSource: AnisetteSource = .local,
+        anisetteServer: String = "",
+        refreshLeadHours: Int = 48,
+        xcodeVersion: String = "26.0",
+        appearance: AppAppearance = .system
+    ) {
+        self.anisetteSource = anisetteSource
+        self.anisetteServer = anisetteServer
+        self.refreshLeadHours = refreshLeadHours
+        self.xcodeVersion = xcodeVersion
+        self.appearance = appearance
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        anisetteSource = try container.decodeIfPresent(AnisetteSource.self, forKey: .anisetteSource) ?? .local
+        anisetteServer = try container.decodeIfPresent(String.self, forKey: .anisetteServer) ?? ""
+        refreshLeadHours = try container.decodeIfPresent(Int.self, forKey: .refreshLeadHours) ?? 48
+        xcodeVersion = try container.decodeIfPresent(String.self, forKey: .xcodeVersion) ?? "26.0"
+        appearance = try container.decodeIfPresent(AppAppearance.self, forKey: .appearance) ?? .system
+    }
 }
 
 struct Library: Codable {

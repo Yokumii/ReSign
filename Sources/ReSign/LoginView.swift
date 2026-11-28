@@ -3,11 +3,14 @@ import SideSign
 
 struct LoginView: View {
     @ObservedObject var model: AppModel
+    @Environment(\.colorScheme) private var colorScheme
     @State private var appleID = ""
     @State private var password = ""
     @State private var code = ""
     @State private var settings: AppSettings
     @State private var localError: String?
+
+    private var palette: ThemePalette { ThemePalette(colorScheme: colorScheme) }
 
     init(model: AppModel) {
         self.model = model
@@ -21,7 +24,7 @@ struct LoginView: View {
                     .font(.system(size: 24, weight: .medium))
                     .foregroundStyle(.tint)
                     .frame(width: 48, height: 48)
-                    .glassEffect(.regular.tint(.accentColor.opacity(0.18)), in: Circle())
+                    .glassEffect(.regular.tint(.accentColor.opacity(palette.glassTintOpacity)), in: Circle())
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Apple 账号").font(.title2.weight(.semibold))
                     Text("用于申请开发证书与描述文件。密码只用于此次登录。")
@@ -70,7 +73,7 @@ struct LoginView: View {
                     .padding(.horizontal, 12)
                     .padding(.vertical, 9)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .themedWarningSurface(cornerRadius: 12, palette: palette)
             }
 
             HStack {
@@ -130,7 +133,7 @@ struct LoginView: View {
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(.background.secondary, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .themedCardSurface(cornerRadius: 12, palette: palette)
             }
             TextField("Apple 账号邮箱", text: $appleID)
                 .textContentType(.username)
@@ -157,7 +160,7 @@ struct LoginView: View {
                 .padding(.top, 10)
             }
             .padding(12)
-            .background(.background.secondary, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .themedCardSurface(cornerRadius: 14, palette: palette)
 
             if model.isLoggingIn {
                 HStack(spacing: 8) {

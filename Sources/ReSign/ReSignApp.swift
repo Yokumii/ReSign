@@ -8,8 +8,12 @@ struct ReSignApp: App {
     var body: some Scene {
         Window("ReSign", id: "main") {
             ContentView(model: model)
+                .preferredColorScheme(model.effectiveAppearance.colorScheme)
                 .frame(minWidth: 920, minHeight: 640)
-                .task { model.start() }
+                .task {
+                    model.applyAppearance()
+                    model.start()
+                }
                 .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didWakeNotification)) { _ in
                     Task { await model.scanDevices() }
                 }

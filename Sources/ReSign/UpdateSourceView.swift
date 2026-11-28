@@ -4,10 +4,13 @@ struct UpdateSourceView: View {
     @ObservedObject var model: AppModel
     let app: ManagedApp
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
     @State private var address: String
     @State private var pattern: String
     @State private var enabled: Bool
     @State private var errorMessage: String?
+
+    private var palette: ThemePalette { ThemePalette(colorScheme: colorScheme) }
 
     init(model: AppModel, app: ManagedApp) {
         self.model = model
@@ -51,7 +54,7 @@ struct UpdateSourceView: View {
                     .font(.title3.weight(.medium))
                     .foregroundStyle(.tint)
                     .frame(width: 40, height: 40)
-                    .glassEffect(.regular.tint(.accentColor.opacity(0.16)), in: Circle())
+                    .glassEffect(.regular.tint(.accentColor.opacity(palette.glassTintOpacity)), in: Circle())
                 VStack(alignment: .leading, spacing: 2) {
                     Text("软件更新来源").font(.title3.weight(.semibold))
                     Text(app.name).font(.callout).foregroundStyle(.secondary)

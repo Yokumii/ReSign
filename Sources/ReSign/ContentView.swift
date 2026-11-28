@@ -4,8 +4,11 @@ import UniformTypeIdentifiers
 
 struct ContentView: View {
     @ObservedObject var model: AppModel
+    @Environment(\.colorScheme) private var colorScheme
     @State private var showingImporter = false
     @State private var networkDevice: RememberedDevice?
+
+    private var palette: ThemePalette { ThemePalette(colorScheme: colorScheme) }
 
     var body: some View {
         NavigationSplitView {
@@ -14,13 +17,23 @@ struct ContentView: View {
         } detail: {
             detail
         }
-        .sheet(isPresented: $model.showLogin, onDismiss: { model.cancelLogin() }) { LoginView(model: model) }
-        .sheet(item: $networkDevice) { device in NetworkConnectionView(model: model, device: device) }
-        .sheet(isPresented: $model.showSettings) { SettingsView(model: model) }
+        .sheet(isPresented: $model.showLogin, onDismiss: { model.cancelLogin() }) {
+            LoginView(model: model)
+                .preferredColorScheme(model.effectiveAppearance.colorScheme)
+        }
+        .sheet(item: $networkDevice) { device in
+            NetworkConnectionView(model: model, device: device)
+                .preferredColorScheme(model.effectiveAppearance.colorScheme)
+        }
+        .sheet(isPresented: $model.showSettings) {
+            SettingsView(model: model)
+                .preferredColorScheme(model.effectiveAppearance.colorScheme)
+        }
         .sheet(isPresented: Binding(get: { model.updateSourceAppID != nil },
                                     set: { if !$0 { model.updateSourceAppID = nil } })) {
             if let app = model.library.apps.first(where: { $0.id == model.updateSourceAppID }) {
                 UpdateSourceView(model: model, app: app)
+                    .preferredColorScheme(model.effectiveAppearance.colorScheme)
             }
         }
         .alert("ReSign", isPresented: Binding(get: { model.notice != nil }, set: { if !$0 { model.notice = nil } })) {
@@ -210,7 +223,7 @@ struct ContentView: View {
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 7)
                         .padding(.vertical, 2)
-                        .background(.quaternary.opacity(0.6), in: Capsule())
+                        .background(palette.pillBackground, in: Capsule())
                 }
             }
             VStack(alignment: .leading, spacing: 0) {
@@ -241,8 +254,7 @@ struct ContentView: View {
                     }
                 }
             }
-            .background(.background.secondary, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(.primary.opacity(0.07), lineWidth: 0.5))
+            .themedCardSurface(cornerRadius: 16, palette: palette)
         }
         .padding(.top, 6)
     }
@@ -280,6 +292,9 @@ struct ContentView: View {
 private struct DeviceSidebarRow: View {
     let device: RememberedDevice
     let current: ConnectedDevice?
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var palette: ThemePalette { ThemePalette(colorScheme: colorScheme) }
 
     var body: some View {
         HStack(spacing: 10) {
@@ -309,7 +324,7 @@ private struct DeviceSidebarRow: View {
     }
 
     private var statusColor: Color {
-        guard let current else { return .secondary.opacity(0.3) }
+        guard let current else { return palette.offlineIndicator }
         return current.trusted ? .green : .orange
     }
 }
@@ -321,6 +336,9 @@ private struct StatusBanner: View {
     var actionTitle: String? = nil
     var actionDisabled = false
     var action: (() -> Void)? = nil
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var palette: ThemePalette { ThemePalette(colorScheme: colorScheme) }
 
     var body: some View {
         HStack(spacing: 12) {
@@ -340,8 +358,8 @@ private struct StatusBanner: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
-        .background(tint.opacity(0.10), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(tint.opacity(0.22), lineWidth: 0.5))
+        .background(palette.bannerBackground(tint), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(palette.bannerBorder(tint), lineWidth: 0.5))
     }
 }
 
@@ -349,6 +367,9 @@ private struct AppCard: View {
     let app: ManagedApp
     let stage: JobStage?
     @ObservedObject var model: AppModel
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var palette: ThemePalette { ThemePalette(colorScheme: colorScheme) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -398,7 +419,7 @@ private struct AppCard: View {
                 .padding(.horizontal, 12)
                 .padding(.vertical, 9)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .themedWarningSurface(cornerRadius: 10, palette: palette)
             }
 
             Divider()
@@ -410,7 +431,7 @@ private struct AppCard: View {
                         Text("·")
                             .foregroundStyle(.tertiary)
                         Text(source.title)
-                            .foregroundStyle(.primary.opacity(0.8))
+                            .foregroundStyle(palette.subtlePrimaryText)
                             .lineLimit(1)
                             .truncationMode(.middle)
                     } else {
@@ -488,8 +509,7 @@ private struct AppCard: View {
             }
         }
         .padding(18)
-        .background(.background.secondary, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(.primary.opacity(0.07), lineWidth: 0.5))
+        .themedCardSurface(cornerRadius: 18, palette: palette)
     }
 
     private var stageBadge: some View {
@@ -503,7 +523,7 @@ private struct AppCard: View {
         .foregroundStyle(stageColor)
         .padding(.horizontal, 8)
         .padding(.vertical, 3)
-        .background(stageColor.opacity(0.12), in: Capsule())
+        .background(palette.badgeBackground(stageColor), in: Capsule())
     }
 
     private var isActiveStage: Bool {
@@ -530,7 +550,7 @@ private struct AppCard: View {
                 Image(nsImage: image).resizable().scaledToFit()
             } else {
                 ZStack {
-                    Color.primary.opacity(0.05)
+                    palette.iconPlaceholder
                     Image(systemName: "app.dashed")
                         .font(.system(size: 22, weight: .medium))
                         .foregroundStyle(.secondary)
@@ -539,7 +559,7 @@ private struct AppCard: View {
         }
         .frame(width: 48, height: 48)
         .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 11, style: .continuous).strokeBorder(.primary.opacity(0.08), lineWidth: 0.5))
+        .overlay(RoundedRectangle(cornerRadius: 11, style: .continuous).strokeBorder(palette.iconBorder, lineWidth: 0.5))
         .accessibilityHidden(true)
     }
 

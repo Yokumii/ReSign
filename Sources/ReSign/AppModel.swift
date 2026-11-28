@@ -27,6 +27,9 @@ final class AppModel: ObservableObject {
     @Published private(set) var verificationRequest: TwoFactorRequest?
     @Published private(set) var availableTeams: [Team] = []
     @Published private(set) var hasGitHubToken = false
+    @Published private(set) var previewAppearance: AppAppearance?
+
+    var effectiveAppearance: AppAppearance { previewAppearance ?? library.settings.appearance }
 
     private let vault = KeychainVault()
     private var store: LibraryStore?
@@ -244,6 +247,15 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func applyAppearance() {
+        NSApp?.appearance = effectiveAppearance.nsAppearance
+    }
+
+    func setAppearancePreview(_ appearance: AppAppearance?) {
+        previewAppearance = appearance
+        applyAppearance()
+    }
+
     func saveSettings(_ settings: AppSettings) throws {
         guard !isBusy, !isLoggingIn else { throw ReSignError("请等待当前任务完成后再保存设置。") }
         let xcodeVersion = settings.xcodeVersion.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -256,6 +268,8 @@ final class AppModel: ObservableObject {
         var updated = library
         updated.settings = normalized
         try commit(updated)
+        previewAppearance = nil
+        applyAppearance()
         if let account, account.context != normalized.authenticationContext { needsLogin = true }
         record("设置已保存。")
     }

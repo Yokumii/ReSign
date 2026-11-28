@@ -20,6 +20,16 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
+            Section("外观") {
+                Picker("主题外观", selection: $settings.appearance) {
+                    ForEach(AppAppearance.allCases, id: \.self) { appearance in
+                        Text(appearance.title).tag(appearance)
+                    }
+                }
+                .pickerStyle(.segmented)
+                Text("默认跟随 macOS 系统外观自动切换浅色与深色模式，切换时可实时预览。")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             Section("自动续签") {
                 Stepper("提前 \(settings.refreshLeadHours) 小时续签", value: $settings.refreshLeadHours, in: 12...72, step: 12)
                 Toggle("登录 Mac 时启动", isOn: Binding(get: { launchAtLogin }, set: { updateLoginItem($0) }))
@@ -140,7 +150,13 @@ struct SettingsView: View {
             .padding(.horizontal, 22)
             .padding(.vertical, 14)
         }
-        .frame(width: 570, height: 680)
+        .frame(width: 570, height: 700)
+        .onChange(of: settings.appearance) { _, newValue in
+            model.setAppearancePreview(newValue)
+        }
+        .onDisappear {
+            model.setAppearancePreview(nil)
+        }
     }
 
     private func updateLoginItem(_ enabled: Bool) {
