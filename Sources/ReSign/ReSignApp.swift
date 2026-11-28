@@ -8,13 +8,14 @@ struct ReSignApp: App {
     var body: some Scene {
         Window("ReSign", id: "main") {
             ContentView(model: model)
-                .frame(minWidth: 900, minHeight: 620)
+                .frame(minWidth: 920, minHeight: 640)
                 .task { model.start() }
                 .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didWakeNotification)) { _ in
                     Task { await model.scanDevices() }
                 }
         }
-        .defaultSize(width: 1060, height: 720)
+        .defaultSize(width: 1080, height: 740)
+        .windowToolbarStyle(.unified)
         .commands {
             CommandGroup(replacing: .appSettings) {
                 SettingsCommandButton(model: model)
