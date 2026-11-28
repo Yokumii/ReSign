@@ -10,7 +10,9 @@ updates:
       day: monday
       time: "09:30"
       timezone: Asia/Shanghai
-    open-pull-requests-limit: 5
+    # Set to 0 to disable automated Dependabot PRs while keeping this configuration.
+    # Change back to 5 to re-enable weekly GitHub Actions updates.
+    open-pull-requests-limit: 0
     groups:
       security-updates:
         applies-to: security-updates

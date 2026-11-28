@@ -10,7 +10,7 @@
 
 ## CI
 
-`.github/workflows/ci.yml` 在推送到 main、向 main 发起 Pull Request 或手动触发时运行：
+`.github/workflows/ci.yml` 在向 main 发起 Pull Request 或手动触发时运行（`main` 通过分支保护要求经由 PR 合入，避免合并后与标签发布重复构建）：
 
 1. 检查运行器、Xcode、Swift 和 Homebrew 依赖。
 2. 运行默认测试。需要真实 USB／局域网设备、外部 Anisette 服务或 GSA 探测的测试保持跳过。
